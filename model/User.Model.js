@@ -7,16 +7,11 @@ const UserSchema = new mongoose.Schema({
         unique: true,
         match: /^\+[1-9]\d{1,14}$/ // E.164 format
     },
-    // nin: {
+    // bvn: {
     //     type: String,
     //     required: true,
     //     unique: true
     // },
-    bvn: {
-        type: String,
-        required: true,
-        unique: true
-    },
     fullName: {
         type: String,
         required: true
@@ -49,6 +44,10 @@ const UserSchema = new mongoose.Schema({
         accountName: String,
         isDefault: Boolean
     }],
+    virtualAccount: {
+        type: Object,
+        unique: true // One virtual account per user
+    },
     deviceInfo: {
         imei: String,
         lastLoginIP: String,

@@ -1,487 +1,947 @@
 const smsSessionModel = require("../model/smsSession.Model");
 const UserModel = require("../model/User.Model");
-const Transaction = require("../model/Transaction.Model");
-const { sendSMS, normalizeNigerianPhone, generateTransactionId } = require("./bankAndSmsUtil.Contl");
+const TransactionModel = require("../model/Transaction.Model");
+const { sendSMS, normalizeNigerianPhone } = require("../utils/smsUtils");
+const { generateTransactionReference, resolveBankByCode, resolveAccountName } = require('../utils/korapayUtils');
+const { initiateRegistration, completeRegistration, verifyPhone, resendOTP } = require('./userController');
+const { handleAirtimePurchase, handleDataPurchase } = require('./airtimeController');
+const bcrypt = require('bcryptjs');
+const { updatePin } = require("./userContrl");
+const { processBankTransfer } = require("./virtualAcctAndPaymentUtils.Contrl");
 
-
-//handle sms command processor
-const handleNewCommand = async(phoneNumber, message) => {
-
-    const user = await UserModel.findOne({phoneNumber, isPhoneVerified:true});
-
-    if(!user){
-        return await sendSMS(phoneNumber, "Welcome! You need to register first. Dial *347*456# to get started");
-    }
+// Main SMS router - handles all incoming SMS
+const processSMSCommand = async (phoneNumber, message) => {
+  try {
+    const normalizedPhone = normalizeNigerianPhone(phoneNumber);
     const cleanMessage = message.trim().toUpperCase();
+    
+    console.log(`📱 SMS from ${normalizedPhone}: ${cleanMessage}`);
 
-    //Balance inquiry
-    if(cleanMessage === 'BAL' || cleanMessage === 'BALANCE'){
-        return await handleBalanceInduiry(user)
+    // Check for active SMS session first
+    const session = await smsSessionModel.findOne({ 
+      phoneNumber: normalizedPhone, 
+      expiresAt: { $gt: new Date() } 
+    });
+
+    if (session) {
+      return await handleSessionCommand(session, message);
     }
 
-    //help command
-    if(cleanMessage === 'HELP' || cleanMessage === 'MENU'){
-        return await sendHelpMenu(phoneNumber);
+    // Handle registration commands
+    if (['START', 'BEGIN', 'REGISTER', 'REG'].some(cmd => cleanMessage.startsWith(cmd))) {
+      if (cleanMessage.startsWith('REG ')) {
+        return await completeRegistration(normalizedPhone, message);
+      } else {
+        return await initiateRegistration(normalizedPhone, message);
+      }
     }
 
-    //  // Pay command - PAY 1000 TO 08123456789 or PAY 1000 TO 1234567890 GTB
-    if(cleanMessage.startsWith('PAY')){
-        return await handlePayCommand(user, cleanMessage);
+    // Handle verification
+    if (cleanMessage.startsWith('VERIFY ')) {
+      return await verifyPhone(normalizedPhone, message);
     }
 
-    // Transaction status - STATUS TXN123456
-    if (cleanMessage.startsWith('STATUS ')) {
-        return await handleStatusInquiry(user, cleanMessage);
+    // Resend OTP
+    if (['RESEND', 'CODE', 'OTP'].includes(cleanMessage)) {
+      return await resendOTP(normalizedPhone);
+    }
+
+    // Reset PIN commands
+    if (['RESET', 'RESETPIN'].includes(cleanMessage)) {
+      return await updatePin(normalizedPhone);
+    }
+
+    // Commands for registered users only
+    const user = await UserModel.findOne({
+      phoneNumber: normalizedPhone,
+      isPhoneVerified: true,
+      status: 'active'
+    });
+
+    if (!user) {
+      return await sendSMS(normalizedPhone, 
+        ` Please register first!
+        
+        Text START to begin registration
+        or HELP for full menu.
+
+        New to TextToPay? Get started in 2 minutes! `);
+    }
+
+    // Route registered user commands
+    return await handleUserCommand(user, cleanMessage);
+
+  } catch (error) {
+    console.error('SMS processing error:', error);
+    return await sendSMS(phoneNumber, 
+      " System temporarily unavailable. Please try again in a moment.");
+  }
+};
+
+// Handle commands for registered users
+const handleUserCommand = async (user, message) => {
+  try {
+    // Balance inquiry
+    if (['BAL', 'BALANCE', 'WALLET'].includes(message)) {
+      return await handleBalanceInquiry(user);
+    }
+
+    // Help/Menu
+    if (['HELP', 'MENU', 'COMMANDS'].includes(message)) {
+      return await sendHelpMenu(user.phoneNumber);
+    }
+
+    // Pay command
+    if (message.startsWith('PAY ')) {
+      return await handlePayCommand(user, message);
+    }
+
+    // Airtime purchase
+    if (message.startsWith('BUY ')) {
+      return await handleAirtimePurchase(user, message);
+    }
+
+    // Data purchase (coming soon)
+    if (message.startsWith('DATA ')) {
+      return await handleDataPurchase(user, message);
+    }
+
+    // Transaction status
+    if (message.startsWith('STATUS ')) {
+      return await handleStatusInquiry(user, message);
+    }
+
+    // Transaction history
+    if (['HISTORY', 'TRANSACTIONS', 'TXN'].includes(message)) {
+      return await sendRecentTransactions(user);
+    }
+
+    // Account details
+    if (['ACCOUNT', 'DETAILS', 'INFO'].includes(message)) {
+      return await sendAccountDetails(user);
     }
 
     // Invalid command
-    return await sendSMS(phoneNumber, 
-    "Invalid command. Reply HELP for available commands or dial *347*456#");
+    return await sendSMS(user.phoneNumber, 
+      ` Unknown command: ${message.substring(0, 20)}...
+        Reply HELP for available commands
+        or for full menu.`);
 
+  } catch (error) {
+    console.error('User command error:', error);
+    return await sendSMS(user.phoneNumber, 
+      " Command failed. Please try again.");
+  }
 };
 
-// Process PAY command
+// Handle SMS sessions (payment confirmations, PIN entry)
+const handleSessionCommand = async (session, message) => {
+  try {
+    const cleanMessage = message.trim().toUpperCase();
+
+    switch (session.currentStep) {
+      case 'awaiting_confirmation':
+        return await handlePaymentConfirmation(session, cleanMessage);
+        
+      case 'awaiting_pin':
+        return await handlePinInput(session, message.trim());
+        
+      default:
+        // Invalid session state, clean up
+        await smsSessionModel.deleteOne({ _id: session._id });
+        return await sendSMS(session.phoneNumber, 
+          " Session expired. Please try again.");
+    }
+
+  } catch (error) {
+    console.error('Session command error:', error);
+    return await sendSMS(session.phoneNumber, 
+      " Session error. Please try again.");
+  }
+};
+
+// Enhanced pay command with better parsing
+// const handlePayCommand = async (user, message) => {
+//   try {
+//     // Parse various formats:
+//     // PAY 1000 TO 08123456789
+//     // PAY 5000 TO 1234567890 GTB
+//     // PAY 2000 TO 08123456789 FOR lunch
+//     const payRegex = /^PAY\s+(\d+(?:\.\d{2})?)\s+TO\s+(\d{10,11})(?:\s+([A-Z]{2,10}))?(?:\s+FOR\s+(.+))?$/i;
+//     const match = message.match(payRegex);
+    
+//     if (!match) {
+//       return await sendSMS(user.phoneNumber, 
+//         ` Invalid format. Use:
+        
+//         💸 Phone transfer:
+//         PAY 1000 TO 08123456789
+
+//         🏦 Bank transfer:
+//         PAY 5000 TO 1234567890 GTB
+
+//         📝 With description:
+//         PAY 2000 TO 08123456789 FOR lunch`);
+//     }
+
+//     const [ amount, recipient, bankCode, description = ''] = match;
+//     const amountNum = parseFloat(amount);
+    
+//     // Validate amount
+//     if (amountNum < 10 || amountNum > 500000) {
+//       return await sendSMS(user.phoneNumber, 
+//         " Amount must be between ₦10 and ₦500,000");
+//     }
+
+//     // Determine if it's phone or bank transfer
+//     const transferType = bankCode ? 'bank' : 'phone';
+//     const fee = transferType === 'phone' ? 10 : 50;
+//     const totalAmount = amountNum + fee;
+    
+//     // Check balance
+//     if (user.walletBalance < totalAmount) {
+//       return await sendSMS(user.phoneNumber, 
+//         `💳 Insufficient balance
+        
+//         Required: ₦${totalAmount.toFixed(2)} (₦${fee} fee)
+//         Your balance: ₦${user.walletBalance.toFixed(2)}
+
+//         💡 Fund via bank transfer to:
+//         ${user.virtualAccount ? user.virtualAccount.accountNumber : 'Account pending'}`);
+//     }
+
+//     let recipientName = 'Unknown';
+//     let recipientDetails = {};
+
+//     if (transferType === 'bank') {
+//       // Bank transfer - resolve account name
+//       const bank = await resolveBankByCode(bankCode);
+//       if (!bank) {
+//         return await sendSMS(user.phoneNumber, 
+//           ` Invalid bank code: ${bankCode}
+          
+//             Popular codes: GTB, UBA, ACCESS, ZENITH, FCMB, FBN`);
+//       }
+
+//       const resolution = await resolveAccountName(recipient, bank.code);
+//       if (!resolution.success) {
+//         return await sendSMS(user.phoneNumber, 
+//           ` Account resolution failed: ${resolution.error}`);
+//       }
+
+//       recipientName = resolution.data.accountName;
+//       recipientDetails = {
+//         accountNumber: recipient,
+//         bankName: bank.name,
+//         bankCode: bank.code
+//       };
+
+//     } else {
+//       // Phone transfer - find recipient
+//       const normalizedRecipient = normalizeNigerianPhone(recipient);
+//       const recipientUser = await UserModel.findOne({ 
+//         phoneNumber: normalizedRecipient,
+//         isPhoneVerified: true 
+//       });
+      
+//       if (!recipientUser) {
+//         return await sendSMS(user.phoneNumber, 
+//           ` Recipient not registered: ${recipient}
+                    
+//             They need to text START to register
+//             or use bank transfer format:
+//             PAY ${amountNum} TO ${recipient} GTB`);
+//       }
+
+//       recipientName = recipientUser.fullName;
+//       recipientDetails = {
+//         phoneNumber: normalizedRecipient,
+//         recipientId: recipientUser._id
+//       };
+//     }
+
+//     // Create SMS session for confirmation
+//     const sessionId = `PAY_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    
+//     await smsSessionModel.create({
+//       phoneNumber: user.phoneNumber,
+//       sessionId,
+//       currentStep: 'awaiting_confirmation',
+//       transactionData: {
+//         amount: amountNum,
+//         recipient,
+//         recipientName,
+//         recipientDetails,
+//         description: description.trim(),
+//         transferType,
+//         bankCode,
+//         fee,
+//         totalAmount
+//       },
+//       expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
+//     });
+
+//     const confirmMessage = `💸 Confirm Payment
+    
+//         Send ₦${amountNum.toFixed(2)} to:
+//          ${recipientName}
+//         ${transferType === 'bank' ? ` ${recipientDetails.bankName}` : ' Phone transfer'}
+//         ${description ? ` For: ${description}\n` : ''} Fee: ₦${fee.toFixed(2)}
+//          Total: ₦${totalAmount.toFixed(2)}
+
+//          Reply YES to confirm
+//          Reply NO to cancel`;
+    
+//     return await sendSMS(user.phoneNumber, confirmMessage);
+
+//   } catch (error) {
+//     console.error('Pay command error:', error);
+//     return await sendSMS(user.phoneNumber, 
+//       " Payment setup failed. Please try again.");
+//   }
+// };
+
+// Enhanced pay command using virtual accounts
+
+//handle pay command
 const handlePayCommand = async (user, message) => {
-    // Parse: PAY 1000 TO 08123456789 [DESC] or PAY 5000 TO 1234567890 GTB [DESC]
-    const payRegex = /^PAY\s+(\d+(?:\.\d{2})?)\s+TO\s+(\d{10,11})(?:\s+([A-Z]{3}))?(?:\s+(.+))?$/i;
+  try {
+    // Parse various formats:
+    // PAY 1000 TO 1234567890 (virtual account)
+    // PAY 5000 TO 1234567890 GTB (bank transfer)
+    // PAY 2000 TO 1234567890 FOR lunch
+    const payRegex = /^PAY\s+(\d+(?:\.\d{2})?)\s+TO\s+(\d{10,11})(?:\s+([A-Z]{2,10}))?(?:\s+FOR\s+(.+))?$/i;
     const match = message.match(payRegex);
     
     if (!match) {
-        return await sendSMS(user.phoneNumber, 
-        `Invalid format. Use:
-    📱 PAY 1000 TO 08123456789 - Phone transfer
-    🏦 PAY 5000 TO 1234567890 GTB - Bank transfer`);
+      return await sendSMS(user.phoneNumber, 
+        ` Invalid format. Use:
+        
+        💸 Virtual Account transfer:
+        PAY 1000 TO 1234567890
+
+        🏦 Bank transfer:
+        PAY 5000 TO 1234567890 GTB
+
+        📝 With description:
+        PAY 2000 TO 1234567890 FOR lunch`);
     }
 
-    const [, amount, recipient, bankCode, description = ''] = match;
+    const [ amount, recipient, bankCode, description = ''] = match;
     const amountNum = parseFloat(amount);
     
     // Validate amount
     if (amountNum < 10 || amountNum > 500000) {
-        return await sendSMS(user.phoneNumber, 
-        "Amount must be between ₦10 and ₦500,000");
+      return await sendSMS(user.phoneNumber, 
+        " Amount must be between ₦10 and ₦500,000");
     }
 
-    // Check balance (including fees)
-    const fee = calculateTransactionFee(amountNum, bankCode ? 'bank' : 'phone');
+    // Check if user has virtual account
+    if (!user.virtualAccount || !user.virtualAccount.accountNumber) {
+      return await sendSMS(user.phoneNumber, 
+        ` Virtual account not ready. Please wait a moment and try again.`);
+    }
+
+    // Determine transfer type based on bank code presence
+    const transferType = bankCode ? 'bank_transfer' : 'internal';
+    const fee = transferType === 'internal' ? 0 : 50; // No fee for internal transfers
     const totalAmount = amountNum + fee;
     
+    // Check balance
     if (user.walletBalance < totalAmount) {
-        return await sendSMS(user.phoneNumber, 
-        `Insufficient balance. 
-    Required: ₦${totalAmount.toFixed(2)} (₦${fee} fee)
-    Your balance: ₦${user.walletBalance.toFixed(2)}`);
+      return await sendSMS(user.phoneNumber, 
+        ` Insufficient balance
+        
+        Required: ₦${totalAmount.toFixed(2)}${fee > 0 ? ` (₦${fee} fee)` : ''}
+        Your balance: ₦${user.walletBalance.toFixed(2)}
+
+        💡 Fund your account:
+        Transfer to: ${user.virtualAccount.accountNumber}
+        Bank: ${user.virtualAccount.bankName || 'Your Bank'}`);
     }
 
-    let recipientName = 'Unknown User';
-    let transferType = 'phone';
-  
-    // Determine transfer type and resolve recipient
-    if (bankCode) {
-        // Bank transfer
-        transferType = 'bank';
-        const bankInfo = resolveNigerianBank(bankCode);
-        
-        if (!bankInfo) {
+    let recipientName = 'Unknown';
+    let recipientDetails = {};
+    let recipientUser = null;
+
+    if (transferType === 'bank_transfer') {
+      // External bank transfer
+      const bank = await resolveBankByCode(bankCode);
+      if (!bank) {
         return await sendSMS(user.phoneNumber, 
-            "Invalid bank code. Common codes: GTB, UBA, ACCESS, ZENITH, FCMB");
-        }
-        
-        // TODO: Call NIP name resolution API
-        recipientName = `${recipient} - ${bankInfo.name}`;
-        
+          ` Invalid bank code: ${bankCode}
+          
+          Popular codes: GTB, UBA, ACCESS, ZENITH, FCMB, FBN`);
+      }
+
+      const resolution = await resolveAccountName(recipient, bank.code);
+      if (!resolution.success) {
+        return await sendSMS(user.phoneNumber, 
+          ` Account resolution failed: ${resolution.error}`);
+      }
+
+      recipientName = resolution.data.accountName;
+      recipientDetails = {
+        accountNumber: recipient,
+        accountName: recipientName,
+        bankName: bank.name,
+        bankCode: bank.code
+      };
+
     } else {
-        // Phone number transfer
-        const normalizedPhone = normalizeNigerianPhone(recipient);
-        const recipientUser = await UserModel.findOne({ phoneNumber: normalizedPhone });
-        
-        if (recipientUser) {
-        recipientName = recipientUser.fullName;
-        } else {
+      // Internal transfer - find recipient by virtual account
+      recipientUser = await UserModel.findOne({ 
+        'virtualAccount.accountNumber': recipient,
+        status: 'active' 
+      });
+      
+      if (!recipientUser) {
         return await sendSMS(user.phoneNumber, 
-            "Recipient not found. They need to register first or use bank transfer format.");
-        }
+          ` Virtual account not found: ${recipient}
+          
+          💡 For bank transfers, add bank code:
+          PAY ${amountNum} TO ${recipient} GTB`);
+      }
+
+      // Prevent self-transfer
+      if (recipientUser._id.toString() === user._id.toString()) {
+        return await sendSMS(user.phoneNumber, 
+          ` Cannot transfer to yourself`);
+      }
+
+      recipientName = recipientUser.fullName || recipientUser.virtualAccount.accountName;
+      recipientDetails = {
+        accountNumber: recipient,
+        accountName: recipientName,
+        userId: recipientUser._id
+      };
     }
 
-     // Create SMS session for confirmation
-    const sessionId = `SMS_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Generate transaction ID
+    const transactionId = await generateTransactionReference('TXN');//`TXN_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    
+    // Create SMS session for confirmation
+    const sessionId = `PAY_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     
     await smsSessionModel.create({
-        phoneNumber: user.phoneNumber,
-        sessionId,
-        currentStep: 'awaiting_confirmation',
-        transactionData: {
+      phoneNumber: user.phoneNumber,
+      sessionId,
+      currentStep: 'awaiting_confirmation',
+      transactionData: {
+        transactionId,
         amount: amountNum,
         recipient,
         recipientName,
+        recipientDetails,
+        recipientUserId: recipientUser?._id,
         description: description.trim(),
         transferType,
         bankCode,
-        fee
+        fee,
+        totalAmount,
+        senderVirtualAccount: {
+          accountNumber: user.virtualAccount.accountNumber,
+          accountName: user.virtualAccount.accountName || user.fullName
         }
+      },
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
     });
 
-    const confirmMessage = `Confirm payment:
-        Send ₦${amountNum.toFixed(2)} to 
-        ${recipientName}
-        ${description ? `📝 For: ${description}\n` : ''} Fee: ₦${fee.toFixed(2)}
-        Total: ₦${totalAmount.toFixed(2)}
+    const transferTypeText = transferType === 'internal' ? ' Internal Transfer' : ' Bank Transfer';
+    const confirmMessage = ` Confirm Payment
+    
+    ${transferTypeText}
+    Send ₦${amountNum.toFixed(2)} to:
+     ${recipientName}
+     ${recipient}${transferType === 'bank_transfer' ? `\n ${recipientDetails.bankName}` : ''}${description ? `\n For: ${description}` : ''}${fee > 0 ? `\n Fee: ₦${fee.toFixed(2)}` : ''}
+     Total: ₦${totalAmount.toFixed(2)}
 
-        Reply YES to confirm or NO to cancel`;
+    Reply YES to confirm
+    Reply NO to cancel
+    
+    Expires in 5 minutes`;
     
     return await sendSMS(user.phoneNumber, confirmMessage);
-}
 
-// Handle confirmation step
-const handleConfirmation = async (session, message) => {
-    const cleanMessage = message.trim().toUpperCase();
-    
-    if (cleanMessage === 'NO' || cleanMessage === 'CANCEL') {
-        await SMSSession.deleteOne({ _id: session._id });
-        return await sendSMS(session.phoneNumber, "Payment cancelled.");
+  } catch (error) {
+    console.error('Pay command error:', error);
+    return await sendSMS(user.phoneNumber, 
+      " Payment setup failed. Please try again.");
+  }
+};
+
+// Handle payment confirmation
+const handlePaymentConfirmation = async (session, message) => {
+  try {
+    if (['NO', 'CANCEL', 'STOP'].includes(message)) {
+      await smsSessionModel.deleteOne({ _id: session._id });
+      return await sendSMS(session.phoneNumber, 
+        " Payment cancelled. Your money is safe! 💰");
     }
     
-    if (cleanMessage !== 'YES' && cleanMessage !== 'CONFIRM') {
-        return await sendSMS(session.phoneNumber, 
-        "Reply YES to confirm payment or NO to cancel");
+    if (!['YES', 'CONFIRM', 'OK'].includes(message)) {
+      return await sendSMS(session.phoneNumber, 
+        ` Please confirm:
+                
+        Reply YES to proceed
+        Reply NO to cancel`);
     }
     
     // Update session to await PIN
     await smsSessionModel.updateOne(
-        { _id: session._id },
-        { currentStep: 'awaiting_pin' }
+      { _id: session._id },
+      { currentStep: 'awaiting_pin' }
     );
     
     return await sendSMS(session.phoneNumber, 
-        "Enter your 4-digit transaction PIN:");
+      ` Enter your 4-digit PIN to complete payment:
+      
+        Keep your PIN secure!`);
+
+  } catch (error) {
+    console.error('Confirmation error:', error);
+    return await sendSMS(session.phoneNumber, 
+      " Confirmation failed. Please try again.");
+  }
 };
 
-// Handle PIN input
-const handlePinInput = async (session, message) => {
-    const pin = message.trim();
-    
-    if (!/^\d{4}$/.test(pin)) {
+// Handle PIN input and process payment
+const handlePinInput = async (session, pin) => {
+    try {
+        if (!/^\d{4}$/.test(pin)) {
         return await sendSMS(session.phoneNumber, 
-        "Invalid PIN format. Enter your 4-digit transaction PIN:");
-    }
-    
-    const user = await UserModel.findOne({ phoneNumber: session.phoneNumber });
-    const isValidPin = await bcrypt.compare(pin, user.pin);
-    
-    if (!isValidPin) {
+            " Invalid PIN format. Enter 4 digits:");
+        }
+        
+        const user = await UserModel.findOne({ phoneNumber: session.phoneNumber });
+        const isValidPin = await bcrypt.compare(pin, user.pin);
+        
+        if (!isValidPin) {
         // Increment failed attempts
         await smsSessionModel.updateOne(
-        { _id: session._id },
-        { $inc: { 'transactionData.pinAttempts': 1 } }
+            { _id: session._id },
+            { $inc: { 'transactionData.pinAttempts': 1 } }
         );
         
-        if (session.transactionData.pinAttempts >= 2) {
-        await smsSessionModel.deleteOne({ _id: session._id });
-        return await sendSMS(session.phoneNumber, 
-            "Too many failed attempts. Transaction cancelled for security.");
+        const attempts = (session.transactionData.pinAttempts || 0) + 1;
+        
+        if (attempts >= 3) {
+            await smsSessionModel.deleteOne({ _id: session._id });
+            return await sendSMS(session.phoneNumber, 
+            ` Too many failed PIN attempts!
+            
+                Payment cancelled for security.
+                Contact support if needed.`);
         }
         
         return await sendSMS(session.phoneNumber, 
-        "Incorrect PIN. Try again:");
+            ` Incorrect PIN (${attempts}/3 attempts)
+            
+            Try again:`);
+        }
+        
+        // Process the transaction
+        return await processPaymentTransaction(user, session);
+
+    } catch (error) {
+        console.error('PIN processing error:', error);
+        return await sendSMS(session.phoneNumber, 
+        " PIN verification failed. Please try again.");
     }
-    // Process the transaction
-  return await processTransaction(user, session);
 };
 
-// Process the actual transaction
-const processTransaction = async (user, session) => {
-    const { amount, recipient, recipientName, description, transferType, bankCode, fee } = session.transactionData;
-    const totalAmount = amount + fee;
-    
-    // Final balance check
-    const currentUser = await UserModel.findById(user._id);
-    if (currentUser.walletBalance < totalAmount) {
+// Process the actual payment transaction
+const processPaymentTransaction = async (user, session) => {
+  try {
+      const { 
+        amount, 
+        recipientName, 
+        recipientDetails, 
+        description, 
+        transferType, 
+        fee, 
+        totalAmount 
+      } = session.transactionData;
+      
+      // Final balance check
+      const currentUser = await UserModel.findById(user._id);
+      if (currentUser.walletBalance < totalAmount) {
         await smsSessionModel.deleteOne({ _id: session._id });
         return await sendSMS(user.phoneNumber, 
-        "Insufficient balance. Transaction cancelled.");
-    }
-    
-    const transactionId = generateTransactionId();
-    
-    try {
-        // Create transaction record
-        const transaction = await Transaction.create({
+          " Insufficient balance. Transaction cancelled.");
+      }
+      
+      const transactionId = generateTransactionReference('TXN');
+      
+      // Create transaction record
+      const transaction = await TransactionModel.create({
+        userId: user._id,
         transactionId,
-        senderPhone: user.phoneNumber,
-        recipientPhone: transferType === 'phone' ? normalizeNigerianPhone(recipient) : null,
-        recipientName,
+        senderUserId: user._id,
+        senderVirtualAccount: {
+          accountNumber: user.virtualAccount.accountNumber,
+          accountName: user.virtualAccount.accountName || user.fullName
+        },
         amount,
         fees: fee,
         description,
         status: 'processing',
-        paymentMethod: transferType === 'phone' ? 'wallet' : 'bank_transfer',
-        bankCode,
+        transferType, // This is already 'internal' or 'bank_transfer' from handlePayCommand
+        paymentMethod: 'wallet',
+        recipientName,
+        ...(transferType === 'internal' 
+          ? { 
+              recipientUserId: recipientDetails.recipientId || recipientDetails.userId,
+              recipientVirtualAccount: {
+                accountNumber: recipientDetails.accountNumber,
+                accountName: recipientName
+              }
+            }
+          : {
+              recipientBankDetails: {
+                accountNumber: recipientDetails.accountNumber,
+                accountName: recipientName,
+                bankName: recipientDetails.bankName,
+                bankCode: recipientDetails.bankCode
+              }
+            }
+        ),
         metadata: {
-            initiatedVia: 'sms',
-            sessionId: session.sessionId
+          initiatedVia: 'sms',
+          sessionId: session.sessionId
         }
-        });
-        
-        // Deduct from sender's wallet
-        await UserModel.updateOne(
+      });
+      
+      // Deduct from sender's wallet
+      await UserModel.updateOne(
         { _id: user._id },
         { $inc: { walletBalance: -totalAmount } }
-        );
-        
-        if (transferType === 'phone') {
+      );
+      
+      if (transferType === 'internal') {
+        // Internal wallet transfer
+        const recipientUser = await UserModel.findById(recipientDetails.recipientId);
 
-            // Internal phone transfer
-            const recipientUser = await UserModel.findOne({ 
-                phoneNumber: normalizeNigerianPhone(recipient) 
-            });
-            if (recipientUser) {
-                // Credit recipient
-                await UserModel.updateOne(
-                { _id: recipientUser._id },
-                { $inc: { walletBalance: amount } }
-                );
-                
-                await Transaction.updateOne(
-                { _id: transaction._id },
-                { status: 'completed', completedAt: new Date() }
-                );
-                
-                // Notify both parties
-                const newSenderBalance = currentUser.walletBalance - totalAmount;
-                
-                await sendSMS(user.phoneNumber, 
-                    `Payment successful! 
-                    ₦${amount.toFixed(2)} sent to ${recipientName}
-                    Ref: ${transactionId}
-                    New balance: ₦${newSenderBalance.toFixed(2)}`
-                );
-                        
-                await sendSMS(recipientUser.phoneNumber, 
-                    `You received ₦${amount.toFixed(2)} from ${user.fullName}
-                    ${description ? `${description}\n` : ''}Ref: ${transactionId}
-                    Balance: ₦${(recipientUser.walletBalance + amount).toFixed(2)}`
-                );
-            } else {
-                throw new Error('Recipient not found');
-            }
+        if (recipientUser) {
+          // Credit recipient
+          await UserModel.updateOne(
+            { _id: recipientUser._id },
+            { $inc: { walletBalance: amount } }
+          );
+          
+          await TransactionModel.updateOne(
+            { _id: transaction._id },
+            { status: 'completed', completedAt: new Date() }
+          );
+          
+          const newSenderBalance = currentUser.walletBalance - totalAmount;
+          
+          // Notify sender
+          await sendSMS(user.phoneNumber, 
+            ` Payment Successful!
+            
+              ₦${amount.toFixed(2)} sent to ${recipientName}
+              ${description ? ` ${description}\n` : ''} Fee: ₦${fee}
+              Ref: ${transactionId}
+              Balance: ₦${newSenderBalance.toFixed(2)}
+
+              Thank you! `);
+          
+          // Notify recipient
+          const newRecipientBalance = recipientUser.walletBalance + amount;
+          await sendSMS(recipientUser.phoneNumber, 
+            ` Money Received!
+            
+              ₦${amount.toFixed(2)} from ${user.fullName}
+              ${description ? ` ${description}\n` : ''} Ref: ${transactionId}
+              Balance: ₦${newRecipientBalance.toFixed(2)}
+
+              Text HELP for commands`);
+            
         } else {
-        // Bank transfer - integrate with Paystack/Flutterwave
-        await processNigerianBankTransfer(transaction, user);
+          throw new Error('Recipient not found');
         }
         
-        // Clean up session
-        await smsSessionModel.deleteOne({ _id: session._id });
+      } else {
+        // Bank transfer - use Korapay
+        const transferResult = await processBankTransfer({
+          recipientBank: recipientDetails.bankCode,
+          recipientAccount: recipientDetails.accountNumber,
+          amount,
+          narration: description || `TextToPay transfer from ${user.fullName}`,
+          reference: transactionId,
+          senderName: user.fullName
+        });
         
-    } catch (error) {
-        console.error('Transaction processing error:', error);
-        
-        // Refund if transaction failed
-        await UserModel.updateOne(
-        { _id: user._id },
-        { $inc: { walletBalance: totalAmount } }
-        );
-        
-        await Transaction.updateOne(
-        { transactionId },
-        { status: 'failed' }
-        );
-        
-        await sendSMS(user.phoneNumber, 
-        "Transaction failed. Your balance has been restored. Try again or contact support.");
-    }
+        if (transferResult.success) {
+          await TransactionModel.updateOne(
+            { _id: transaction._id },
+            { 
+              status: 'completed', 
+              completedAt: new Date(),
+              'metadata.korapayId': transferResult.data.korapayId
+            }
+          );
+          
+          const newBalance = currentUser.walletBalance - totalAmount;
+          
+          await sendSMS(user.phoneNumber, 
+            ` Bank Transfer Successful!
+            
+              ₦${amount.toFixed(2)} sent to:
+              ${recipientName}
+              ${recipientDetails.bankName}
+              ${description ? ` ${description}\n` : ''} Fee: ₦${fee}
+              Ref: ${transactionId}
+              Balance: ₦${newBalance.toFixed(2)}
+
+              Transfer completed! `);
+          
+        } else {
+          throw new Error(transferResult.error);
+        }
+      }
+      
+      // Clean up session
+      await smsSessionModel.deleteOne({ _id: session._id });
+      
+  } catch (error) {
+    console.error('Transaction processing error:', error);
+    
+    // Refund if transaction failed
+    await UserModel.updateOne(
+      { _id: user._id },
+      { $inc: { walletBalance: totalAmount } }
+    );
+
+    await TransactionModel.updateOne(
+      { transactionId },
+      { 
+        status: 'failed',
+        'metadata.errorMessage': error.message
+      }
+    );
+    
+    await sendSMS(user.phoneNumber, 
+      ` Payment Failed: ${error.message}
+      
+        Your balance has been restored.
+        🔍 Ref: ${transactionId}
+
+        Please try again or contact support.`);
+  }
 };
 
-// Handle balance inquiry with enhanced wallet info
+// Enhanced balance inquiry
 const handleBalanceInquiry = async (user) => {
-
+  try {
     // Get recent transactions count
-    const recentTransactions = await Transaction.countDocuments({
-        $or: [
-        { senderPhone: user.phoneNumber },
-        { recipientPhone: user.phoneNumber }
-        ],
-        createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } // Last 30 days
+    const recentCount = await TransactionModel.countDocuments({
+      $or: [
+        { senderUserId: user._id },
+        { recipientUserId: user._id }
+      ],
+      createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
     });
     
-    // Calculate remaining daily limit
-    const today = new Date();
-    let remainingLimit = user.wallet.dailyLimit;
-    
-    if (user.wallet.lastResetDate.toDateString() === today.toDateString()) {
-        remainingLimit = user.wallet.dailyLimit - user.wallet.dailySpent;
-    }
-    
-    const message = `Wallet Balance
-    ₦${user.wallet.balance.toFixed(2)}
+    const message = ` Wallet Balance
+            
+         ₦${user.walletBalance.toFixed(2)}
+         ${user.phoneNumber}
+         ${user.fullName}
 
-    📊 Daily limit: ₦${remainingLimit.toFixed(2)}
-    🏆 Tier: ${user.wallet.tier.toUpperCase()}
-    📱 ${user.phoneNumber}
-    👤 ${user.fullName}
+        ${user.virtualAccount ? ` Fund Account: ${user.virtualAccount.accountNumber}
+         ${user.virtualAccount.bankName}
 
-    ${recentTransactions} transactions (30 days)
-    Reply HELP for commands`;
+        ` : ''} ${recentCount} transactions (30 days)
+
+         Reply HELP for commands
+         Dial *347*456# for menu`;
     
     return await sendSMS(user.phoneNumber, message);
+
+  } catch (error) {
+    console.error('Balance inquiry error:', error);
+    return await sendSMS(user.phoneNumber, 
+      " Balance check failed. Please try again.");
+  }
 };
 
 // Handle status inquiry
 const handleStatusInquiry = async (user, message) => {
-
+  try {
     const parts = message.split(' ');
     if (parts.length !== 2) {
-        return await sendSMS(user.phoneNumber, 
-        "Use: STATUS TXN123456");
+      return await sendSMS(user.phoneNumber, 
+        ` Use format: STATUS TXN123456
+        
+            Get transaction reference from payment confirmation SMS.`);
     }
     
     const txnId = parts[1];
-    const transaction = await Transaction.findOne({ 
-        transactionId: txnId,
-        $or: [
-        { senderPhone: user.phoneNumber },
-        { recipientPhone: user.phoneNumber }
-        ]
+    const transaction = await TransactionModel.findOne({ 
+      transactionId: txnId,
+      $or: [
+        { senderUserId: user._id },
+        { recipientUserId: user._id }
+      ]
     });
     
     if (!transaction) {
-        return await sendSMS(user.phoneNumber, 
-        "Transaction not found.");
+      return await sendSMS(user.phoneNumber, 
+        ` Transaction not found: ${txnId}
+        
+            Check the reference number and try again.`);
     }
     
     const statusEmoji = {
-        'completed': '✅',
-        'processing': '⏳',
-        'failed': '❌',
-        'pending': '🕒'
+      'completed': '✅',
+      'processing': '⏳',
+      'failed': '❌',
+      'pending': '🕒'
     };
     
-    const statusMessage = `${statusEmoji[transaction.status] || '❓'} Transaction Status
-        ${transaction.transactionId}
-        ₦${transaction.amount.toFixed(2)}
-        ${transaction.recipientName}
-        ${transaction.status.toUpperCase()}
-        ${transaction.createdAt.toLocaleDateString()}`;
+    const isSent = transaction.senderPhone === user.phoneNumber;
+    const statusMessage = `${statusEmoji[transaction.status]} Transaction Status
+    
+        🔍 ${transaction.transactionId}
+        💰 ₦${transaction.amount.toFixed(2)}
+        ${isSent ? '📤' : '📥'} ${isSent ? 'TO' : 'FROM'}: ${transaction.recipientName}
+        📊 ${transaction.status.toUpperCase()}
+        📅 ${transaction.createdAt.toLocaleDateString('en-NG')}
+
+        ${transaction.description ? `📝 ${transaction.description}` : ''}`;
     
     return await sendSMS(user.phoneNumber, statusMessage);
+
+  } catch (error) {
+    console.error('Status inquiry error:', error);
+    return await sendSMS(user.phoneNumber, 
+      " Status check failed. Please try again.");
+  }
 };
 
-// Send help menu
+// Send recent transactions
+const sendRecentTransactions = async (user) => {
+  try {
+    const transactions = await TransactionModel.find({
+      $or: [
+        { senderPhone: user.phoneNumber },
+        { recipientPhone: user.phoneNumber }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .limit(5);
+    
+    if (transactions.length === 0) {
+      return await sendSMS(user.phoneNumber, 
+        `📊 Transaction History
+                    
+            No transactions yet.
+
+            💡 Send your first payment:
+            PAY 1000 TO 1234567890
+
+            Buy airtime: BUY 200 FOR 08123456789`);
+    }
+    
+    let message = ` Recent Transactions (Last 5)
+    
+`;
+    
+    transactions.forEach((txn, index) => {
+      const isSent = txn.senderUserId === user._id;
+      const emoji = isSent ? '📤' : '📥';
+      const status = txn.status === 'completed' ? '✅' : 
+                    txn.status === 'failed' ? '❌' : '⏳';
+      
+      message += `${emoji} ₦${txn.amount} ${isSent ? 'to' : 'from'} ${txn.recipientName} ${status}
+`;
+    });
+    
+    message += `
+    💡 Check status: STATUS TXN123456
+    📱 Full history: HELP `;//Dial *347*456#
+    
+    return await sendSMS(user.phoneNumber, message);
+
+  } catch (error) {
+    console.error('Transaction history error:', error);
+    return await sendSMS(user.phoneNumber, 
+      " History unavailable. Please try again.");
+  }
+};
+
+// Send account details
+const sendAccountDetails = async (user) => {
+  try {
+    const message = ` Account Details
+            
+        ${user.phoneNumber}
+        ${user.fullName}
+        Balance: ₦${user.walletBalance.toFixed(2)}
+        ${user.bvnVerified ? '✅' : '⚠️'} BVN Verified
+        Joined: ${user.createdAt.toLocaleDateString('en-NG')}
+
+        ${user.virtualAccount ? `🏦 Funding Account:
+        ${user.virtualAccount.accountNumber}
+        ${user.virtualAccount.bankName}
+
+        ` : ''} Need help? Text HELP
+        `;
+    
+    return await sendSMS(user.phoneNumber, message);
+
+  } catch (error) {
+    console.error('Account details error:', error);
+    return await sendSMS(user.phoneNumber, 
+      " Account details unavailable. Please try again.");
+  }
+};
+
+// Send comprehensive help menu
 const sendHelpMenu = async (phoneNumber) => {
-    const helpMessage = `📱 TextPay Commands:
-
-    PAY 1000 TO 08012345678
-    Send to phone number
+  try {
+    const helpMessage = `📱 TextToPay Commands
     
-    PAY 5000 TO 1234567890 GTB  
-    Send to bank account
-    
-    BAL - Check balance
-    STATUS TXN123456 - Track payment
-    HELP - Show commands
+        💸 PAYMENTS:
+        PAY 1000 TO 1234567890
+        PAY 5000 TO 1234567890 GTB
 
-    Dial *347*456# for full menu`;
+        📞 AIRTIME:
+        BUY 200 FOR 08123456789
+
+        🔍 ACCOUNT:
+        BAL - Check balance
+        STATUS TXN123456 - Track payment  
+        HISTORY - Recent transactions
+        ACCOUNT - Your details
+
+        📞 Support: HELP
+        💡 More features coming soon!
+
+        Ready to send money? `;
     
     return await sendSMS(phoneNumber, helpMessage);
-};
 
-// Calculate transaction fees
-const calculateTransactionFee = (amount, type) => {
-  if (type === 'phone') {
-    // Free for amounts under ₦1000, ₦10 for higher amounts
-    return amount < 1000 ? 0 : 10;
-  } else {
-    // Bank transfer fees
-    return amount < 5000 ? 25 : 50;
+  } catch (error) {
+    console.error('Help menu error:', error);
+    return await sendSMS(phoneNumber, 
+      " Help unavailable. Dial *347*456# for support.");
   }
-};
-
-// Normalize Nigerian phone numbers
-const normalizeNigerianPhone = (phone) => {
-  const cleaned = phone.replace(/\D/g, '');
-  
-  // 11-digit starting with 0
-  if (cleaned.startsWith('0') && cleaned.length === 11) {
-    return '+234' + cleaned.substring(1);
-  }
-  
-  // 13-digit starting with 234
-  if (cleaned.startsWith('234') && cleaned.length === 13) {
-    return '+' + cleaned;
-  }
-  
-  // 10-digit (missing country code)
-  if (cleaned.length === 10) {
-    return '+234' + cleaned;
-  }
-  
-  return phone; // Return as-is if can't normalize
-};
-
-// Process Nigerian bank transfers
-const processNigerianBankTransfer = async (transaction, sender) => {
-  // This will integrate with Paystack Transfer API or Flutterwave Transfer
-  // For now, mark as pending manual processing
-  
-    await Transaction.updateOne(
-        { _id: transaction._id },
-        { 
-        status: 'pending',
-        metadata: { 
-            ...transaction.metadata,
-            requiresManualProcessing: true,
-            processingNote: 'Bank transfer requires external processing'
-        }
-        }
-    );
-    
-    await sendSMS(sender.phoneNumber, 
-        `Bank transfer initiated
-    Ref: ${transaction.transactionId}
-    ₦${transaction.amount.toFixed(2)} to ${transaction.recipientName}
-
-    You'll get confirmation SMS when completed.`);
-};
-
-// Main SMS processing router
-const processSMSCommand = async (phoneNumber, message) => {
-    try {
-        const session = await smsSessionModel.findOne({ 
-        phoneNumber, 
-        expiresAt: { $gt: new Date() } 
-        });
-        
-        // No active session - handle new command
-        if (!session) {
-        return await handleNewCommand(phoneNumber, message);
-        }
-        
-        // Continue existing session
-        switch (session.currentStep) {
-        case 'awaiting_confirmation':
-            return await handleConfirmation(session, message);
-        case 'awaiting_pin':
-            return await handlePinInput(session, message);
-        default:
-            return await handleNewCommand(phoneNumber, message);
-        }
-    } catch (error) {
-        console.error('SMS processing error:', error);
-        return await sendSMS(phoneNumber, 
-        "System error. Please try again or contact support.");
-    }
 };
 
 module.exports = {
-  handleNewCommand,
+  processSMSCommand,
+  handleUserCommand,
+  handleSessionCommand,
   handlePayCommand,
-  handleConfirmation,
+  handlePaymentConfirmation,
   handlePinInput,
-  processTransaction,
+  processPaymentTransaction,
   handleBalanceInquiry,
   handleStatusInquiry,
-  sendHelpMenu,
-  calculateTransactionFee,
-  normalizeNigerianPhone,
-  processNigerianBankTransfer,
-  processSMSCommand
+  sendRecentTransactions,
+  sendAccountDetails,
+  sendHelpMenu
 };

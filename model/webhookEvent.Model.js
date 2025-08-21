@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const webhookEventSchema = new mongoose.Schema({
     provider: {
         type: String,
-        required: true // 'paystack', 'korapay', 'africastalking', etc.
+        required: true // 'paystack', 'korapay', 'africastalking', 'mono' etc.
     },
     eventType: String,
     eventData: Object,
