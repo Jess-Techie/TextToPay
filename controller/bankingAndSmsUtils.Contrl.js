@@ -6,8 +6,8 @@ const crypto = require('crypto');
 const sendSMS = async (phoneNumber, message) => {
   try {
     const credentials = {
-      apiKey: process.env.AFRICAS_TALKING_API_KEY,
-      username: process.env.AFRICAS_TALKING_USERNAME
+      apiKey: process.env.africasTalkingApiKey,
+      username: process.env.africasTalkingApiUsername
     };
     
     const AfricasTalking = require('africastalking')(credentials);
@@ -16,7 +16,7 @@ const sendSMS = async (phoneNumber, message) => {
     const options = {
       to: phoneNumber,
       message: message,
-      from: process.env.SMS_SENDER_ID || 'TextPay'
+      // from: 'AFRICASTKNG'//process.env.africasTalkingSmsSenderId ||  // based on their documentation cox we are using sandbox
     };
     
     const result = await sms.send(options);
@@ -24,93 +24,15 @@ const sendSMS = async (phoneNumber, message) => {
     
     return {
       success: true,
-      messageId: result.SMSMessageData.Recipients[0].messageId,
-      status: result.SMSMessageData.Recipients[0].status
+      messageId: result.SMSMessageData?.Recipients[0]?.messageId,
+      status: result.SMSMessageData?.Recipients[0]?.status
     };
     
   } catch (error) {
-    console.error('❌ SMS sending failed:', error);
+    console.error(' SMS sending failed:', error);
     return { success: false, error: error.message };
   }
 };
-
-
-// Process transfer via Korapay
-// const processKorapayTransfer = async (recipientData, amount, reason, reference) => {
-//   try {
-//     console.log(`💸 Processing Korapay transfer: ₦${amount} to ${recipientData.account_name}`);
-    
-//     const response = await korapayAPI.post('/transactions/transfer', {
-//       reference,
-//       destination: {
-//         type: 'bank_account',
-//         amount: amount * 100, // Convert to kobo
-//         currency: 'NGN',
-//         narration: reason || 'TextPay Transfer',
-//         bank_account: {
-//           bank: recipientData.bank_code,
-//           account: recipientData.account_number
-//         },
-//         customer: {
-//           name: recipientData.account_name
-//         }
-//       }
-//     });
-    
-//     if (response.data.status) {
-//       return {
-//         success: true,
-//         reference: response.data.data.reference,
-//         status: response.data.data.status,
-//         korapayId: response.data.data.id
-//       };
-//     }
-    
-//     throw new Error(response.data.message || 'Transfer failed');
-    
-//   } catch (error) {
-//     console.error('❌ Korapay transfer failed:', error);
-//     return { 
-//       success: false, 
-//       error: error.response?.data?.message || error.message 
-//     };
-//   }
-// };
-
-// // Initialize payment with Korapay
-// const initializeKorapayPayment = async (amount, email, reference, metadata = {}) => {
-//   try {
-//     const response = await korapayAPI.post('/charges/initialize', {
-//       amount: amount * 100, // Convert to kobo
-//       currency: 'NGN',
-//       email,
-//       reference,
-//       redirect_url: process.env.FRONTEND_URL + '/payment/success',
-//       metadata,
-//       channels: ['bank_transfer', 'card', 'ussd'],
-//       notification_url: process.env.API_URL + '/api/webhooks/korapay'
-//     });
-    
-//     if (response.data.status) {
-//       return {
-//         success: true,
-//         paymentUrl: response.data.data.checkout_url,
-//         reference: response.data.data.reference
-//       };
-//     }
-    
-//     throw new Error(response.data.message || 'Payment initialization failed');
-    
-//   } catch (error) {
-//     console.error('❌ Korapay payment initialization failed:', error);
-//     return { 
-//       success: false, 
-//       error: error.response?.data?.message || error.message 
-//     };
-//   }
-// };
-
-// Validate Nigerian phone number
 
 const isValidNigerianPhone = (phone) => {
   const cleaned = phone.replace(/\D/g, '');

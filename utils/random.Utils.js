@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const KycverifModel = require('../model/Kycverif.Model');
 
 // ------------------ ENCRYPTION UTILITIES ------------------
 const ALGORITHM = 'aes-256-gcm';
@@ -6,21 +7,44 @@ const KEY_LENGTH = 32;
 const IV_LENGTH = 16;
 
 // Get encryption key from environment
+// const getEncryptionKey = () => {
+//     if (!process.env.BVN_ENCRYPTION_KEY) {
+//         console.warn('BVN_ENCRYPTION_KEY not found in environment. Using temporary key.');
+//         return crypto.randomBytes(KEY_LENGTH);
+//     }
+//     return Buffer.from(process.env.BVN_ENCRYPTION_KEY, 'hex');
+// };
 const getEncryptionKey = () => {
+
+    // console.log('BVN_ENCRYPTION_KEY from env:', process.env.BVN_ENCRYPTION_KEY); // Add this line
+
     if (!process.env.BVN_ENCRYPTION_KEY) {
         console.warn('BVN_ENCRYPTION_KEY not found in environment. Using temporary key.');
         return crypto.randomBytes(KEY_LENGTH);
     }
-    return Buffer.from(process.env.BVN_ENCRYPTION_KEY, 'hex');
+    
+    const key = Buffer.from(process.env.BVN_ENCRYPTION_KEY, 'hex');
+    
+    if (key.length !== KEY_LENGTH) {
+        throw new Error(`Invalid key length: ${key.length}, expected: ${KEY_LENGTH}`);
+    }
+    
+    return key;
 };
 
-// Encrypt data
 const encrypt = (text) => {
     try {
-        const key = getEncryptionKey();
-        const iv = crypto.randomBytes(IV_LENGTH);
+        // const key = getEncryptionKey();
+        // const iv = crypto.randomBytes(IV_LENGTH);
         
-        const cipher = crypto.createCipherGCM(ALGORITHM, key, iv);
+        const key = getEncryptionKey();
+        // console.log('Key length:', key.length, 'bytes'); // Should show 32
+        
+        const iv = crypto.randomBytes(IV_LENGTH);
+        // console.log('IV length:', iv.length, 'bytes'); // Should show 16
+
+        // Use createCipheriv with 'aes-256-gcm' algorithm
+        const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
         
         let encrypted = cipher.update(text, 'utf8', 'hex');
         encrypted += cipher.final('hex');
@@ -33,7 +57,6 @@ const encrypt = (text) => {
     }
 };
 
-// Decrypt data
 const decrypt = (encryptedText) => {
     try {
         const key = getEncryptionKey();
@@ -47,7 +70,8 @@ const decrypt = (encryptedText) => {
         const tag = Buffer.from(parts[1], 'hex');
         const encrypted = parts[2];
         
-        const decipher = crypto.createDecipherGCM(ALGORITHM, key, iv);
+        // Use createDecipheriv with 'aes-256-gcm' algorithm
+        const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
         decipher.setAuthTag(tag);
         
         let decrypted = decipher.update(encrypted, 'hex', 'utf8');
@@ -73,6 +97,7 @@ const getDecryptedBVN = async (userId) => {
 const generateEncryptionKey = () => {
     return crypto.randomBytes(KEY_LENGTH).toString('hex');
 };
+// console.log('Generated encryption key:', generateEncryptionKey());
 
 module.exports = {
     encrypt,    

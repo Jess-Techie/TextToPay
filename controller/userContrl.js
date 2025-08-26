@@ -2,9 +2,11 @@ const UserModel = require('../model/User.Model');
 const OtpModel = require('../model/Otp.Model');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { sendSMS, normalizeNigerianPhone, hashPin, generateOTP, isValidPin } = require('./bankingAndSmsUtils.Contrl');
+const { sendSMS, normalizeNigerianPhone, hashPin, generateOTP, isValidPin, isValidNigerianPhone } = require('./bankingAndSmsUtils.Contrl');
 const { checkBVNExists, verifyBVNWithMono, verifyAndSaveIdentity } = require('./kycContrl');
 const { createVirtualAccount } = require('./virtualAcctAndPaymentUtils.Contrl');
+const { encrypt } = require('../utils/random.Utils');
+const KycverifModel = require('../model/Kycverif.Model');
 
 // Register new user via SMS
 const initiateRegistration = async (phoneNumber, message) => {
@@ -41,6 +43,7 @@ const initiateRegistration = async (phoneNumber, message) => {
 };
 
 // Complete user registration
+
 const completeRegistration = async (phoneNumber, message) => {
     try {
       // Parse format: REG 12345678901 1234
@@ -53,7 +56,7 @@ const completeRegistration = async (phoneNumber, message) => {
         );
       }
 
-      const [bvn, pin] = regMatch;
+      const [, bvn, pin] = regMatch;
       const normalizedPhone = normalizeNigerianPhone(phoneNumber);
 
       // Validate inputs
@@ -78,11 +81,32 @@ const completeRegistration = async (phoneNumber, message) => {
 
       // Step 1: Verify BVN first to get user details (try Mono first, fallback to Raven)
       let bvnVerification;
-      try {
-        bvnVerification = await verifyBVNWithMono(bvn);
-      } catch (error) {
-        console.log('Mono BVN failed, ', error.message);
+      // try {
+      //   bvnVerification = await verifyBVNWithMono(bvn);
+      // } catch (error) {
+      //   console.log('Mono BVN failed, ', error.message);
+      //     return await sendSMS(phoneNumber, " BVN verification failed. Please check your BVN and try again.");
+      // }
+      
+      // Add this right after the BVN validation, before the Mono call
+      if (process.env.NODE_ENV === 'development' || bvn === '12345678902') {
+        // Mock BVN verification for testing
+        bvnVerification = {
+          isValid: true,
+          fullName: 'soludo Adi',
+          email: 'soludo@gmail.com',
+          phoneNumber: phoneNumber,
+          provider: 'test'
+        };
+        console.log('Using test BVN verification');
+      } else {
+        // Real Mono verification
+        try {
+          bvnVerification = await verifyBVNWithMono(bvn);
+        } catch (error) {
+          console.log('Mono BVN failed, ', error.message);
           return await sendSMS(phoneNumber, " BVN verification failed. Please check your BVN and try again.");
+        }
       }
 
       if (!bvnVerification.isValid) {
@@ -103,19 +127,45 @@ const completeRegistration = async (phoneNumber, message) => {
         status: 'active'
       });
 
-      // Save KYC data securely (hashed only)
-      try {
-        await verifyAndSaveIdentity(
-          user._id,
-          "bvn",
-          bvn
-        );
-      } catch (error) {
-        // If KYC save fails, delete the created user
-        await UserModel.findByIdAndDelete(user._id);
-        console.error("KYC save failed:", error.message);
-        return await sendSMS(phoneNumber, " Registration failed. Please try again later.");
-      }
+      // // Save KYC data securely (hashed only) this is the actual code
+      // try {
+      //   await verifyAndSaveIdentity(
+      //     user._id,
+      //     "bvn",
+      //     bvn
+      //   );
+      // } catch (error) {
+      //   // If KYC save fails, delete the created user
+      //   await UserModel.findByIdAndDelete(user._id);
+      //   console.error("KYC save failed:", error.message);
+      //   return await sendSMS(phoneNumber, " Registration failed. Please try again later.");
+      // }
+      
+      // Save KYC data manually for testing (since verifyAndSaveIdentity is commented out)
+        try {
+          // Encrypt and save KYC record manually
+          const encryptedBVN = encrypt(bvn);
+
+          await KycverifModel.findOneAndUpdate(
+            { userid: user._id },
+            {
+              userid: user._id,
+              idType: 'bvn',
+              idNumber: encryptedBVN,
+              verificationProvider: 'test',
+              verificationDate: new Date(),
+              verificationStatus: 'verified'
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+          
+          console.log('KYC data saved manually for testing');
+        } catch (error) {
+          // If KYC save fails, delete the created user
+          await UserModel.findByIdAndDelete(user._id);
+          console.error("KYC save failed:", error.message);
+          return await sendSMS(phoneNumber, " Registration failed. Please try again later.");
+        }
 
       //  Create Korapay virtual account
       try {
@@ -143,13 +193,14 @@ const completeRegistration = async (phoneNumber, message) => {
       // Step 6: Generate phone verification OTP
       const otp = generateOTP();
       await OtpModel.create({
+        userId: user._id, 
         phoneNumber: normalizedPhone,
         otp,
         purpose: 'phone_verification',
         expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
       });
 
-      const successMessage = `✅ Registration successful!
+      const successMessage = ` Registration successful!
         📱 Verification code: ${otp}
         ⏰ Valid for 5 minutes
 
@@ -176,10 +227,16 @@ const verifyPhone = async (phoneNumber, message) => {
         return await sendSMS(phoneNumber, " Use format: VERIFY [4-digit code]");
       }
 
-      const [otp] = verifyMatch;
+      const [, otp] = verifyMatch;
       const normalizedPhone = normalizeNigerianPhone(phoneNumber);
 
+      const user = await UserModel.findOne({ phoneNumber: normalizedPhone });
+      if (!user) {
+        return await sendSMS(phoneNumber, " User not found. Please register first.");
+      }
+
       const otpRecord = await OtpModel.findOne({
+        userId: user._id,
         phoneNumber: normalizedPhone,
         otp,
         purpose: 'phone_verification',
@@ -188,7 +245,7 @@ const verifyPhone = async (phoneNumber, message) => {
       });
 
       if (!otpRecord) {
-        return await sendSMS(phoneNumber, " Invalid or expired verification code. Text START to get a new code.");
+        return await sendSMS(phoneNumber, " Invalid or expired verification code. Text resend || code to get a new code.");
       }
 
       // Mark OTP as verified
@@ -203,7 +260,7 @@ const verifyPhone = async (phoneNumber, message) => {
         }
       );
 
-      const user = await UserModel.findOne({ phoneNumber: normalizedPhone });
+      await UserModel.findOne({ phoneNumber: normalizedPhone });
 
       const welcomeMessage = ` Phone verified successfully!
 
@@ -253,6 +310,7 @@ const resendOTP = async (phoneNumber) => {
 
       // Create new OTP
       await OtpModel.create({
+        userId: user._id,
         phoneNumber: normalizedPhone,
         otp,
         purpose: 'phone_verification',
@@ -309,7 +367,7 @@ const updatePin = async (phoneNumber, currentPin, newPin) => {
   };
 
   // Login with PIN (for web/app)
-  const loginUser = async (phoneNumber, pin) => {
+const loginUser = async (phoneNumber, pin) => {
       try {
         if (!phoneNumber || !pin) {
           return await sendSMS(phoneNumber, " Phone number and PIN are required.");

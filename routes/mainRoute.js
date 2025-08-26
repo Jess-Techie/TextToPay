@@ -3,21 +3,13 @@ const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 
 // Controllers
-const { loginUser, getUserProfile } = require('../controller/userController');
-const { processSMSCommand } = require('../controller/enhancedSmsController');
-const { getAirtimeHistory } = require('../controller/airtimeController');
+const { loginUser, getUserProfile } = require('../controller/userContrl');
+const { processSMSCommand } = require('../controller/smsCommands.Contrl');
+const { getAirtimeHistory } = require('../controller/airtimeAndData.Contrl');
 const TransactionModel = require('../model/Transaction.Model');
 const UserModel = require('../model/User.Model');
-
-// Utils
-// const { 
-// //   sendSMS, 
-//   generateOTP, 
-//   normalizeNigerianPhone,
-//   generateRateLimitKey 
-// } = require('../utils/smsUtils');
-const { verifyWebhookSignature } = require('../utils/korapayUtils');
-const { sendSMS } = require('../controller/bankAndSmsUtil.Contrl');
+const { verifyWebhookSignature } = require('../controller/virtualAcctAndPaymentUtils.Contrl');
+const { sendSMS, generateRateLimitKey } = require('../controller/bankingAndSmsUtils.Contrl');
 
 const router = express.Router();
 
@@ -75,8 +67,8 @@ router.get('/health', (req, res) => {
 // Handle incoming SMS from Africa's Talking
 router.post('/sms/webhook', smsRateLimit, async (req, res) => {
   try {
-    const { from, to, text, date, id, networkCode } = req.body;
-    
+    const { from, to, text, date, id,  networkCode = 'UNKNOWN' } = req.body;
+
     console.log(`📱 Incoming SMS from ${from}: ${text}`);
     
     // Log the SMS interaction
@@ -86,7 +78,7 @@ router.post('/sms/webhook', smsRateLimit, async (req, res) => {
       text: text.substring(0, 50) + '...',
       date,
       id,
-      networkCode
+      ...(networkCode && { networkCode })
     });
     
     // Process the SMS command asynchronously
@@ -162,8 +154,8 @@ router.get('/transactions/history', authenticateToken, async (req, res) => {
     // Build query
     const query = {
       $or: [
-        { senderPhone: user.phoneNumber },
-        { recipientPhone: user.phoneNumber }
+        { senderUserId: user._id },
+        { recipientUserId: user._id }
       ]
     };
     
@@ -184,10 +176,10 @@ router.get('/transactions/history', authenticateToken, async (req, res) => {
         amount: txn.amount,
         fees: txn.fees,
         recipient: txn.recipientName,
-        recipientPhone: txn.recipientPhone,
+        recipientUserId: txn.recipientUserId,
         description: txn.description,
         status: txn.status,
-        type: txn.senderPhone === user.phoneNumber ? 'sent' : 'received',
+        type: txn.senderUserId === user.senderUserId ? 'sent' : 'received',
         method: txn.paymentMethod,
         createdAt: txn.createdAt,
         completedAt: txn.completedAt
@@ -217,8 +209,8 @@ router.get('/transactions/:transactionId', authenticateToken, async (req, res) =
     const transaction = await TransactionModel.findOne({
       transactionId,
       $or: [
-        { senderPhone: user.phoneNumber },
-        { recipientPhone: user.phoneNumber }
+        { senderUserId: user._id },
+        { recipientUserId: user._id }
       ]
     });
     
@@ -233,7 +225,7 @@ router.get('/transactions/:transactionId', authenticateToken, async (req, res) =
         amount: transaction.amount,
         fees: transaction.fees,
         recipient: transaction.recipientName,
-        recipientPhone: transaction.recipientPhone,
+        recipientUserId: transaction.recipientUserId,
         description: transaction.description,
         status: transaction.status,
         paymentMethod: transaction.paymentMethod,
@@ -269,7 +261,7 @@ router.get('/wallet/balance', authenticateToken, async (req, res) => {
       TransactionModel.aggregate([
         {
           $match: {
-            senderPhone: user.phoneNumber,
+            senderUserId: user._id,
             status: 'completed',
             createdAt: { $gte: thirtyDaysAgo }
           }
@@ -279,7 +271,7 @@ router.get('/wallet/balance', authenticateToken, async (req, res) => {
       TransactionModel.aggregate([
         {
           $match: {
-            recipientPhone: user.phoneNumber,
+            recipientUserId: user._id,
             status: 'completed',
             createdAt: { $gte: thirtyDaysAgo }
           }
@@ -288,8 +280,8 @@ router.get('/wallet/balance', authenticateToken, async (req, res) => {
       ]),
       TransactionModel.countDocuments({
         $or: [
-          { senderPhone: user.phoneNumber },
-          { recipientPhone: user.phoneNumber }
+          { senderUserId: user._id },
+          { recipientUserId: user._id }
         ],
         createdAt: { $gte: thirtyDaysAgo }
       })
@@ -330,7 +322,7 @@ router.get('/airtime/history', authenticateToken, getAirtimeHistory);
 // Get list of Nigerian banks
 router.get('/banks/list', async (req, res) => {
   try {
-    const { getNigerianBanks } = require('../utils/korapayUtils');
+    const { getNigerianBanks } = require('../controller/virtualAcctAndPaymentUtils.Contrl');
     const result = await getNigerianBanks();
     
     res.json({
@@ -354,8 +346,7 @@ router.post('/banks/resolve', async (req, res) => {
         error: 'Account number and bank code are required' 
       });
     }
-    
-    const { resolveAccountName } = require('../utils/korapayUtils');
+    const { resolveAccountName } = require('../controller/virtualAcctAndPaymentUtils.Contrl');
     const result = await resolveAccountName(accountNumber, bankCode);
     
     res.json(result);
@@ -482,7 +473,7 @@ const handleTransferFailed = async (data) => {
       );
       
       // Refund user
-      const user = await UserModel.findOne({ phoneNumber: transaction.senderPhone });
+      const user = await UserModel.findOne({ senderUserId: transaction.senderUserId });
       if (user) {
         const refundAmount = transaction.amount + transaction.fees;
         
@@ -493,13 +484,13 @@ const handleTransferFailed = async (data) => {
         
         // Notify user
         await sendSMS(user.phoneNumber, 
-          `❌ Transfer Failed
-          
-₦${transaction.amount} to ${transaction.recipientName}
-Reason: ${failure_reason}
+          ` Transfer Failed
+                    
+          ₦${transaction.amount} to ${transaction.recipientName}
+          Reason: ${failure_reason}
 
-₦${refundAmount} refunded to your wallet.
-Ref: ${reference}`);
+          ₦${refundAmount} refunded to your wallet.
+          Ref: ${reference}`);
       }
     }
     

@@ -33,6 +33,6 @@ const kycSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Index for faster lookups
-kycSchema.index({ userid: 1 });
+// kycSchema.index({ userid: 1 });
 
 module.exports = mongoose.model("KYC", kycSchema);

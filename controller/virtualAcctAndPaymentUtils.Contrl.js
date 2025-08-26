@@ -15,7 +15,7 @@ const korapayAPI = axios.create({
 // Create virtual account for user
 const createVirtualAccount = async (userData) => {
   try {
-    const { userId, user, fullName, phoneNumber, bvn } = userData;
+    const { userId, fullName, phoneNumber, bvn } = userData;
     
     console.log(` Creating virtual account for: ${fullName}`);
 
@@ -62,20 +62,15 @@ const createVirtualAccount = async (userData) => {
       account_name: fullName,
       account_reference: reference,
       permanent: true,
-      bank_code: '035', // Wema Bank (commonly used for virtual accounts)
+      bank_code: '000', // Wema Bank (commonly used for virtual accounts)
       customer: {
         name: fullName,
-        email: `${user.email || `user${userId}@texttopay.app`}`, // Generate email if not provided
-        phone: phoneNumber
+        email: `user${userId}@texttopay.app`, // Generate email if not provided
+        // phone: phoneNumber
       },
       kyc: {
         bvn: plainBVN, //use decrypted BVN
       }
-      // meta: {
-      //   user_id: userId,
-      //   bvn: bvn,
-      //   created_via: 'sms_registration'
-      // }
     });
 
     if (response.data.status && response.data.data) {

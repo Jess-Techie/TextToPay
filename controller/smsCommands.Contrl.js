@@ -1,13 +1,15 @@
 const smsSessionModel = require("../model/smsSession.Model");
 const UserModel = require("../model/User.Model");
 const TransactionModel = require("../model/Transaction.Model");
-const { sendSMS, normalizeNigerianPhone } = require("../utils/smsUtils");
-const { generateTransactionReference, resolveBankByCode, resolveAccountName } = require('../utils/korapayUtils');
-const { initiateRegistration, completeRegistration, verifyPhone, resendOTP } = require('./userController');
-const { handleAirtimePurchase, handleDataPurchase } = require('./airtimeController');
+// const { sendSMS, normalizeNigerianPhone } = require("../utils/smsUtils");
+// const { generateTransactionReference, resolveBankByCode, resolveAccountName } = require('../utils/korapayUtils');
+// const { initiateRegistration, completeRegistration, verifyPhone, resendOTP } = require('./userController');
+// const { handleAirtimePurchase, handleDataPurchase } = require('./airtimeController');
 const bcrypt = require('bcryptjs');
-const { updatePin } = require("./userContrl");
-const { processBankTransfer } = require("./virtualAcctAndPaymentUtils.Contrl");
+const { updatePin, verifyPhone, resendOTP, initiateRegistration, completeRegistration } = require("./userContrl");
+const { processBankTransfer, generateTransactionReference, resolveBankByCode, resolveAccountName } = require("./virtualAcctAndPaymentUtils.Contrl");
+const { normalizeNigerianPhone, sendSMS } = require("./bankingAndSmsUtils.Contrl");
+const { handleAirtimePurchase, handleDataPurchase } = require("./airtimeAndData.Contrl");
 
 // Main SMS router - handles all incoming SMS
 const processSMSCommand = async (phoneNumber, message) => {
@@ -160,149 +162,6 @@ const handleSessionCommand = async (session, message) => {
   }
 };
 
-// Enhanced pay command with better parsing
-// const handlePayCommand = async (user, message) => {
-//   try {
-//     // Parse various formats:
-//     // PAY 1000 TO 08123456789
-//     // PAY 5000 TO 1234567890 GTB
-//     // PAY 2000 TO 08123456789 FOR lunch
-//     const payRegex = /^PAY\s+(\d+(?:\.\d{2})?)\s+TO\s+(\d{10,11})(?:\s+([A-Z]{2,10}))?(?:\s+FOR\s+(.+))?$/i;
-//     const match = message.match(payRegex);
-    
-//     if (!match) {
-//       return await sendSMS(user.phoneNumber, 
-//         ` Invalid format. Use:
-        
-//         💸 Phone transfer:
-//         PAY 1000 TO 08123456789
-
-//         🏦 Bank transfer:
-//         PAY 5000 TO 1234567890 GTB
-
-//         📝 With description:
-//         PAY 2000 TO 08123456789 FOR lunch`);
-//     }
-
-//     const [ amount, recipient, bankCode, description = ''] = match;
-//     const amountNum = parseFloat(amount);
-    
-//     // Validate amount
-//     if (amountNum < 10 || amountNum > 500000) {
-//       return await sendSMS(user.phoneNumber, 
-//         " Amount must be between ₦10 and ₦500,000");
-//     }
-
-//     // Determine if it's phone or bank transfer
-//     const transferType = bankCode ? 'bank' : 'phone';
-//     const fee = transferType === 'phone' ? 10 : 50;
-//     const totalAmount = amountNum + fee;
-    
-//     // Check balance
-//     if (user.walletBalance < totalAmount) {
-//       return await sendSMS(user.phoneNumber, 
-//         `💳 Insufficient balance
-        
-//         Required: ₦${totalAmount.toFixed(2)} (₦${fee} fee)
-//         Your balance: ₦${user.walletBalance.toFixed(2)}
-
-//         💡 Fund via bank transfer to:
-//         ${user.virtualAccount ? user.virtualAccount.accountNumber : 'Account pending'}`);
-//     }
-
-//     let recipientName = 'Unknown';
-//     let recipientDetails = {};
-
-//     if (transferType === 'bank') {
-//       // Bank transfer - resolve account name
-//       const bank = await resolveBankByCode(bankCode);
-//       if (!bank) {
-//         return await sendSMS(user.phoneNumber, 
-//           ` Invalid bank code: ${bankCode}
-          
-//             Popular codes: GTB, UBA, ACCESS, ZENITH, FCMB, FBN`);
-//       }
-
-//       const resolution = await resolveAccountName(recipient, bank.code);
-//       if (!resolution.success) {
-//         return await sendSMS(user.phoneNumber, 
-//           ` Account resolution failed: ${resolution.error}`);
-//       }
-
-//       recipientName = resolution.data.accountName;
-//       recipientDetails = {
-//         accountNumber: recipient,
-//         bankName: bank.name,
-//         bankCode: bank.code
-//       };
-
-//     } else {
-//       // Phone transfer - find recipient
-//       const normalizedRecipient = normalizeNigerianPhone(recipient);
-//       const recipientUser = await UserModel.findOne({ 
-//         phoneNumber: normalizedRecipient,
-//         isPhoneVerified: true 
-//       });
-      
-//       if (!recipientUser) {
-//         return await sendSMS(user.phoneNumber, 
-//           ` Recipient not registered: ${recipient}
-                    
-//             They need to text START to register
-//             or use bank transfer format:
-//             PAY ${amountNum} TO ${recipient} GTB`);
-//       }
-
-//       recipientName = recipientUser.fullName;
-//       recipientDetails = {
-//         phoneNumber: normalizedRecipient,
-//         recipientId: recipientUser._id
-//       };
-//     }
-
-//     // Create SMS session for confirmation
-//     const sessionId = `PAY_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    
-//     await smsSessionModel.create({
-//       phoneNumber: user.phoneNumber,
-//       sessionId,
-//       currentStep: 'awaiting_confirmation',
-//       transactionData: {
-//         amount: amountNum,
-//         recipient,
-//         recipientName,
-//         recipientDetails,
-//         description: description.trim(),
-//         transferType,
-//         bankCode,
-//         fee,
-//         totalAmount
-//       },
-//       expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
-//     });
-
-//     const confirmMessage = `💸 Confirm Payment
-    
-//         Send ₦${amountNum.toFixed(2)} to:
-//          ${recipientName}
-//         ${transferType === 'bank' ? ` ${recipientDetails.bankName}` : ' Phone transfer'}
-//         ${description ? ` For: ${description}\n` : ''} Fee: ₦${fee.toFixed(2)}
-//          Total: ₦${totalAmount.toFixed(2)}
-
-//          Reply YES to confirm
-//          Reply NO to cancel`;
-    
-//     return await sendSMS(user.phoneNumber, confirmMessage);
-
-//   } catch (error) {
-//     console.error('Pay command error:', error);
-//     return await sendSMS(user.phoneNumber, 
-//       " Payment setup failed. Please try again.");
-//   }
-// };
-
-// Enhanced pay command using virtual accounts
-
 //handle pay command
 const handlePayCommand = async (user, message) => {
   try {
@@ -327,7 +186,7 @@ const handlePayCommand = async (user, message) => {
         PAY 2000 TO 1234567890 FOR lunch`);
     }
 
-    const [ amount, recipient, bankCode, description = ''] = match;
+    const [ , amount, recipient, bankCode, description = ''] = match;
     const amountNum = parseFloat(amount);
     
     // Validate amount
@@ -337,10 +196,12 @@ const handlePayCommand = async (user, message) => {
     }
 
     // Check if user has virtual account
-    if (!user.virtualAccount || !user.virtualAccount.accountNumber) {
+    if (!user.virtualAccount || !user.virtualAccount?.accountNumber) {
       return await sendSMS(user.phoneNumber, 
         ` Virtual account not ready. Please wait a moment and try again.`);
     }
+    console.log('user.virtualAccount:', user.virtualAccount);
+    console.log('virtualAccount structure:', JSON.stringify(user.virtualAccount, null, 2));
 
     // Determine transfer type based on bank code presence
     const transferType = bankCode ? 'bank_transfer' : 'internal';
@@ -356,8 +217,8 @@ const handlePayCommand = async (user, message) => {
         Your balance: ₦${user.walletBalance.toFixed(2)}
 
         💡 Fund your account:
-        Transfer to: ${user.virtualAccount.accountNumber}
-        Bank: ${user.virtualAccount.bankName || 'Your Bank'}`);
+        Transfer to: ${user.virtualAccount?.accountNumber || 'N/A'}
+        Bank: ${user.virtualAccount?.bankName || 'Your Bank'}`);
     }
 
     let recipientName = 'Unknown';
@@ -409,7 +270,7 @@ const handlePayCommand = async (user, message) => {
           ` Cannot transfer to yourself`);
       }
 
-      recipientName = recipientUser.fullName || recipientUser.virtualAccount.accountName;
+      recipientName = recipientUser.fullName || recipientUser.virtualAccount?.accountName;
       recipientDetails = {
         accountNumber: recipient,
         accountName: recipientName,
@@ -418,12 +279,13 @@ const handlePayCommand = async (user, message) => {
     }
 
     // Generate transaction ID
-    const transactionId = await generateTransactionReference('TXN');//`TXN_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const transactionId =  generateTransactionReference('TXN');//`TXN_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     
     // Create SMS session for confirmation
     const sessionId = `PAY_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     
     await smsSessionModel.create({
+      userId: user._id,
       phoneNumber: user.phoneNumber,
       sessionId,
       currentStep: 'awaiting_confirmation',
@@ -439,10 +301,20 @@ const handlePayCommand = async (user, message) => {
         bankCode,
         fee,
         totalAmount,
-        senderVirtualAccount: {
-          accountNumber: user.virtualAccount.accountNumber,
-          accountName: user.virtualAccount.accountName || user.fullName
-        }
+        // senderVirtualAccount: {
+        //   accountNumber: user.virtualAccount?.accountNumber,
+        //   accountName: user.virtualAccount?.accountName || user.fullName
+        // }
+        senderVirtualAccount: user.virtualAccount 
+          ? {
+              accountNumber: user.virtualAccount?.accountNumber,
+              accountName: user.virtualAccount?.accountName || user.fullName
+            }
+          : {
+          accountNumber: 'N/A',
+          accountName: user.fullName
+        },
+
       },
       expiresAt: new Date(Date.now() + 5 * 60 * 1000) // 5 minutes
     });
@@ -456,10 +328,10 @@ const handlePayCommand = async (user, message) => {
      ${recipient}${transferType === 'bank_transfer' ? `\n ${recipientDetails.bankName}` : ''}${description ? `\n For: ${description}` : ''}${fee > 0 ? `\n Fee: ₦${fee.toFixed(2)}` : ''}
      Total: ₦${totalAmount.toFixed(2)}
 
-    Reply YES to confirm
-    Reply NO to cancel
-    
-    Expires in 5 minutes`;
+      Reply YES to confirm
+      Reply NO to cancel
+      
+      Expires in 5 minutes`;
     
     return await sendSMS(user.phoneNumber, confirmMessage);
 
@@ -513,7 +385,7 @@ const handlePinInput = async (session, pin) => {
             " Invalid PIN format. Enter 4 digits:");
         }
         
-        const user = await UserModel.findOne({ phoneNumber: session.phoneNumber });
+        const user = await UserModel.findOne({ phoneNumber: session.phoneNumber }).lean();
         const isValidPin = await bcrypt.compare(pin, user.pin);
         
         if (!isValidPin) {
@@ -552,6 +424,8 @@ const handlePinInput = async (session, pin) => {
 
 // Process the actual payment transaction
 const processPaymentTransaction = async (user, session) => {
+  let totalAmount = 0; // Initialize with default value
+  let transactionId; // to be accessible in catch block
   try {
       const { 
         amount, 
@@ -560,27 +434,39 @@ const processPaymentTransaction = async (user, session) => {
         description, 
         transferType, 
         fee, 
-        totalAmount 
+        totalAmount: sessionTotalAmount
       } = session.transactionData;
       
+      totalAmount = sessionTotalAmount || (amount + fee); // Assign with fallback
+      transactionId = generateTransactionReference('TXN'); // Assign it here to match with the rest of the code
+
       // Final balance check
       const currentUser = await UserModel.findById(user._id);
       if (currentUser.walletBalance < totalAmount) {
         await smsSessionModel.deleteOne({ _id: session._id });
-        return await sendSMS(user.phoneNumber, 
+        return await sendSMS(currentUser.phoneNumber, 
           " Insufficient balance. Transaction cancelled.");
       }
       
-      const transactionId = generateTransactionReference('TXN');
+      // const transactionId = generateTransactionReference('TXN');
       
       // Create transaction record
       const transaction = await TransactionModel.create({
-        userId: user._id,
+        userId: currentUser._id,
         transactionId,
-        senderUserId: user._id,
-        senderVirtualAccount: {
-          accountNumber: user.virtualAccount.accountNumber,
-          accountName: user.virtualAccount.accountName || user.fullName
+        senderUserId: currentUser._id,
+        // senderVirtualAccount: {
+        //   accountNumber: user.virtualAccount?.accountNumber || 'N/A',
+        //   accountName: user.virtualAccount?.accountName || user.fullName
+        // },
+        senderVirtualAccount: currentUser.virtualAccount
+          ? {
+              accountNumber: currentUser.virtualAccount?.accountNumber,
+              accountName: currentUser.virtualAccount?.accountName || currentUser.fullName
+            }
+          : {
+          accountNumber: 'N/A',
+          accountName: currentUser.fullName
         },
         amount,
         fees: fee,
@@ -709,10 +595,12 @@ const processPaymentTransaction = async (user, session) => {
     console.error('Transaction processing error:', error);
     
     // Refund if transaction failed
-    await UserModel.updateOne(
-      { _id: user._id },
-      { $inc: { walletBalance: totalAmount } }
-    );
+    if(totalAmount > 0){
+      await UserModel.updateOne(
+        { _id: user._id },
+        { $inc: { walletBalance: totalAmount } }
+      );
+    }
 
     await TransactionModel.updateOne(
       { transactionId },
@@ -750,8 +638,8 @@ const handleBalanceInquiry = async (user) => {
          ${user.phoneNumber}
          ${user.fullName}
 
-        ${user.virtualAccount ? ` Fund Account: ${user.virtualAccount.accountNumber}
-         ${user.virtualAccount.bankName}
+        ${user.virtualAccount ? ` Fund Account: ${user.virtualAccount?.accountNumber}
+         ${user.virtualAccount?.bankName}
 
         ` : ''} ${recentCount} transactions (30 days)
 
@@ -884,8 +772,8 @@ const sendAccountDetails = async (user) => {
         Joined: ${user.createdAt.toLocaleDateString('en-NG')}
 
         ${user.virtualAccount ? `🏦 Funding Account:
-        ${user.virtualAccount.accountNumber}
-        ${user.virtualAccount.bankName}
+        ${user.virtualAccount?.accountNumber || 'N/A'}
+        ${user.virtualAccount?.bankName || 'your bank'}
 
         ` : ''} Need help? Text HELP
         `;

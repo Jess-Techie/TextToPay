@@ -1,80 +1,3 @@
-// const mongoose = require('mongoose');
-
-// const TransactionSchema = new mongoose.Schema({
-//     userId:{
-//         type: String,
-//         unique: true,
-//         required: true
-//     },
-//     transactionId: {
-//         type: String,
-//         unique: true,
-//         required: true
-//   },
-//     senderPhone: {
-//         type: String,
-//         required: true
-//     },
-//     recipientPhone: {
-//         type: String,
-//         required: true
-//     },
-//     recipientName: String, // From name resolution
-//     amount: {
-//         type: Number,
-//         required: true,
-//         min: 1
-//     },
-//     description: String,
-//     currency: {
-//         type: String,
-//         default: 'NGN'
-//     },
-//     status: {
-//         type: String,
-//         enum: ['initiated', 'pending', 'confirmed', 'processing', 'completed', 'failed', 'cancelled'],
-//         default: 'initiated'
-//     },
-//     paymentMethod: {
-//         type: String,
-//         enum: ['wallet', 'bank_transfer', 'ussd'],
-//         required: true
-//     },
-//     bankCode: String, // If bank transfer
-//     fees: {
-//         type: Number,
-//         default: 0
-//     },
-//     reference: String, // External payment reference
-//     smsLogs: [{
-//         direction: {
-//         type: String,
-//         enum: ['inbound', 'outbound']
-//         },
-//         message: String,
-//         status: {
-//         type: String,
-//         enum: ['sent', 'delivered', 'failed']
-//         },
-//         timestamp: {
-//         type: Date,
-//         default: Date.now
-//         }
-//     }],
-//     metadata: {
-//         ipAddress: String,
-//         userAgent: String,
-//         location: String
-//     },
-//     createdAt: {
-//         type: Date,
-//         default: Date.now
-//     },
-//     completedAt: Date
-// }, {timestamps: true});
-
-// module.exports = mongoose.model('Transaction', TransactionSchema);
-
 const mongoose = require('mongoose');
 
 const TransactionSchema = new mongoose.Schema({
@@ -85,7 +8,7 @@ const TransactionSchema = new mongoose.Schema({
     },
     transactionId: {
         type: String,
-        unique: true,
+        unique: true,   // ✅ unique index only here
         required: true
     },
     senderUserId: {
@@ -124,7 +47,15 @@ const TransactionSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['initiated', 'pending', 'confirmed', 'processing', 'completed', 'failed', 'cancelled'],
+        enum: [
+            'initiated',
+            'pending',
+            'confirmed',
+            'processing',
+            'completed',
+            'failed',
+            'cancelled'
+        ],
         default: 'initiated'
     },
     transferType: {
@@ -176,10 +107,9 @@ const TransactionSchema = new mongoose.Schema({
     timestamps: true 
 });
 
-// Index for better query performance
+// Compound indexes for query optimization
 TransactionSchema.index({ senderUserId: 1, createdAt: -1 });
 TransactionSchema.index({ recipientUserId: 1, createdAt: -1 });
-TransactionSchema.index({ transactionId: 1 });
 TransactionSchema.index({ status: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Transaction', TransactionSchema);
