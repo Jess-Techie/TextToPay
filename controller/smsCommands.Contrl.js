@@ -235,19 +235,30 @@ const handlePayCommand = async (user, message) => {
           Popular codes: GTB, UBA, ACCESS, ZENITH, FCMB, FBN`);
       }
 
-      const resolution = await resolveAccountName(recipient, bank.code);
-      if (!resolution.success) {
-        return await sendSMS(user.phoneNumber, 
-          ` Account resolution failed: ${resolution.error}`);
-      }
+      //
+      if (recipient === '0000000000') {
+        recipientName = 'Test Account';
+        recipientDetails = {
+          accountNumber: recipient,
+          accountName: recipientName,
+          bankName: bank.name,
+          bankCode: bank.code
+        };
+      } else {
+        const resolution = await resolveAccountName(recipient, bank.code);
+        if (!resolution.success) {
+          return await sendSMS(user.phoneNumber, 
+            ` Account resolution failed: ${resolution.error}`);
+        }
 
-      recipientName = resolution.data.accountName;
-      recipientDetails = {
-        accountNumber: recipient,
-        accountName: recipientName,
-        bankName: bank.name,
-        bankCode: bank.code
-      };
+        recipientName = resolution.data.accountName;
+        recipientDetails = {
+          accountNumber: recipient,
+          accountName: recipientName,
+          bankName: bank.name,
+          bankCode: bank.code
+        };
+    }
 
     } else {
       // Internal transfer - find recipient by virtual account
@@ -274,7 +285,7 @@ const handlePayCommand = async (user, message) => {
       recipientDetails = {
         accountNumber: recipient,
         accountName: recipientName,
-        userId: recipientUser._id
+        userId: recipientUser._id.toString() //convert objectId to string
       };
     }
 
@@ -283,7 +294,7 @@ const handlePayCommand = async (user, message) => {
     
     // Create SMS session for confirmation
     const sessionId = `PAY_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    
+
     await smsSessionModel.create({
       userId: user._id,
       phoneNumber: user.phoneNumber,
@@ -295,7 +306,7 @@ const handlePayCommand = async (user, message) => {
         recipient,
         recipientName,
         recipientDetails,
-        recipientUserId: recipientUser?._id,
+        recipientUserId: recipientUser?._id.toString(), // Store recipient userId if internal || convert to string
         description: description.trim(),
         transferType,
         bankCode,
@@ -338,7 +349,7 @@ const handlePayCommand = async (user, message) => {
   } catch (error) {
     console.error('Pay command error:', error);
     return await sendSMS(user.phoneNumber, 
-      " Payment setup failed. Please try again.");
+    "Payment setup failed. Please try again.");
   }
 };
 
@@ -434,8 +445,13 @@ const processPaymentTransaction = async (user, session) => {
         description, 
         transferType, 
         fee, 
-        totalAmount: sessionTotalAmount
+        totalAmount: sessionTotalAmount,
+        senderVirtualAccount  // Get it from session
       } = session.transactionData;
+      
+      console.log('session.transactionData:', JSON.stringify(session.transactionData, null, 2));
+      console.log('recipientDetails from session:', recipientDetails);
+
       
       totalAmount = sessionTotalAmount || (amount + fee); // Assign with fallback
       transactionId = generateTransactionReference('TXN'); // Assign it here to match with the rest of the code
@@ -452,22 +468,23 @@ const processPaymentTransaction = async (user, session) => {
       
       // Create transaction record
       const transaction = await TransactionModel.create({
-        userId: currentUser._id,
+        userId: user._id,
         transactionId,
-        senderUserId: currentUser._id,
+        senderUserId: user._id,
         // senderVirtualAccount: {
         //   accountNumber: user.virtualAccount?.accountNumber || 'N/A',
         //   accountName: user.virtualAccount?.accountName || user.fullName
         // },
-        senderVirtualAccount: currentUser.virtualAccount
+        senderVirtualAccount: user.virtualAccount
           ? {
-              accountNumber: currentUser.virtualAccount?.accountNumber,
-              accountName: currentUser.virtualAccount?.accountName || currentUser.fullName
+              accountNumber: user.virtualAccount?.accountNumber,
+              accountName: user.virtualAccount?.accountName || user.fullName
             }
           : {
-          accountNumber: 'N/A',
-          accountName: currentUser.fullName
-        },
+              accountNumber: 'N/A',
+              accountName: user.fullName
+            },
+        // senderVirtualAccount,  // Use from session instead of currentUser
         amount,
         fees: fee,
         description,
@@ -477,7 +494,7 @@ const processPaymentTransaction = async (user, session) => {
         recipientName,
         ...(transferType === 'internal' 
           ? { 
-              recipientUserId: recipientDetails.recipientId || recipientDetails.userId,
+              recipientUserId: recipientDetails.userId,
               recipientVirtualAccount: {
                 accountNumber: recipientDetails.accountNumber,
                 accountName: recipientName
@@ -506,7 +523,8 @@ const processPaymentTransaction = async (user, session) => {
       
       if (transferType === 'internal') {
         // Internal wallet transfer
-        const recipientUser = await UserModel.findById(recipientDetails.recipientId);
+        // const recipientUser = await UserModel.findById(recipientDetails.recipientId);
+        const recipientUser = await UserModel.findById(recipientDetails.userId);
 
         if (recipientUser) {
           // Credit recipient

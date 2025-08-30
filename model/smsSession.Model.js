@@ -22,10 +22,11 @@ const smsSessionSchema = new mongoose.Schema({
         default: 'awaiting_command'
     },
     transactionData: {
-        amount: Number,
-        recipient: String,
-        recipientName: String,
-        description: String
+        // amount: Number,
+        // recipient: String,
+        // recipientName: String,
+        // description: String
+        type: mongoose.Schema.Types.Mixed
     },
     lastActivity: {
         type: Date,

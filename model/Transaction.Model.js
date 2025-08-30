@@ -60,14 +60,14 @@ const TransactionSchema = new mongoose.Schema({
     },
     transferType: {
         type: String,
-        enum: ['internal', 'bank_transfer'], // internal = virtual account to virtual account
+        enum: ['internal', 'bank_transfer', 'airtime', 'data'], // Add these
         required: true
     },
     paymentMethod: {
         type: String,
-        enum: ['wallet', 'bank_transfer', 'ussd'],
+        enum: ['wallet', 'bank_transfer', 'ussd', 'airtime_purchase', 'data_purchase'], // Add these
         required: true
-    },
+     },
     fees: {
         type: Number,
         default: 0

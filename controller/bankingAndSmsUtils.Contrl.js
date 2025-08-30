@@ -35,6 +35,12 @@ const sendSMS = async (phoneNumber, message) => {
 };
 
 const isValidNigerianPhone = (phone) => {
+
+  // Add this check at the start of both functions
+  if (!phone || typeof phone !== 'string') {
+    return false; // or null for normalizeNigerianPhone
+  }
+
   const cleaned = phone.replace(/\D/g, '');
   
   // Nigerian mobile number patterns
@@ -61,6 +67,11 @@ const isValidNigerianPhone = (phone) => {
 
 // Normalize Nigerian phone numbers
 const normalizeNigerianPhone = (phone) => {
+
+  // Add this check at the start of both functions
+  if (!phone || typeof phone !== 'string') {
+    return false; // or null for normalizeNigerianPhone
+  }
   const cleaned = phone.replace(/\D/g, '');
   
   // 11-digit starting with 0

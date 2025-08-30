@@ -147,6 +147,22 @@ const processBankTransfer = async (transferData) => {
     
     console.log(`💸 Processing bank transfer: ₦${amount} to ${recipientAccount}`);
 
+    // Handle test accounts - simulate successful transfer
+    if (recipientAccount.startsWith('0000') || recipientAccount === '1234567890') {
+      console.log('🧪 Simulating test transfer');
+      return {
+        success: true,
+        data: {
+          reference: reference,
+          status: 'success',
+          korapayId: `TEST_${Date.now()}`,
+          fee: 50,
+          amount: amount
+        }
+      };
+    }
+
+    //regular Api call for reall account
     const response = await korapayAPI.post('/transactions/transfer', {
       reference,
       destination: {

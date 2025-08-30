@@ -32,20 +32,24 @@ const detectNetworkFromPhone = (phoneNumber) => {
 const handleAirtimePurchase = async (user, message) => {
   try {
     // Parse: BUY 200 FOR 08123456789 or BUY 500 MTN 08123456789
-    const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?\s+(?:FOR\s+)?(\d{10,11})$/i;
+    // const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?\s+(?:FOR\s+)?(\d{10,11})$/i;
+    const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(?:FOR\s+)?(\d{10,11}))?$/i;
     const match = message.match(airtimeRegex);
     
     if (!match) {
       return await sendSMS(user.phoneNumber, 
         ` Invalid format. Use:
-        
+
+        BUY 200 (for yourself)
         BUY 200 FOR 08123456789
         BUY 500 MTN 08123456789
 
         Amount: ₦50 - ₦10,000`);
     }
 
-    const [amount, specifiedNetwork, recipient] = match;
+    const [, amount, specifiedNetwork, recipient] = match;
+    const finalRecipient = recipient || user.phoneNumber;
+    
     const amountNum = parseFloat(amount);
     
     // Validate amount
@@ -55,12 +59,12 @@ const handleAirtimePurchase = async (user, message) => {
     }
 
     // Validate phone number
-    if (!isValidNigerianPhone(recipient)) {
+    if (!isValidNigerianPhone(finalRecipient)) {
       return await sendSMS(user.phoneNumber, 
         " Invalid phone number format. Use 11-digit Nigerian number.");
     }
 
-    const normalizedRecipient = normalizeNigerianPhone(recipient);
+    const normalizedRecipient = normalizeNigerianPhone(finalRecipient);
     
     // Detect network if not specified
     const network = specifiedNetwork || detectNetworkFromPhone(normalizedRecipient);
@@ -89,23 +93,50 @@ const handleAirtimePurchase = async (user, message) => {
     const reference = generateTransactionReference('AIRTIME');
     
     // Create transaction record
+    // const transaction = await TransactionModel.create({
+    //   transactionId: reference,
+    //   userId: user._id.toString(),
+    //   senderUserId: user._id.toString(),
+    //   senderPhone: user.phoneNumber,
+    //   recipientPhone: normalizedRecipient,
+    //   recipientName: `${network} Airtime`,
+    //   amount: amountNum,
+    //   fees: fee,
+    //   description: `${network} ₦${amountNum} airtime`,
+    //   status: 'processing',
+    //   transferType: 'airtime',
+    //   paymentMethod: 'wallet',
+    //   metadata: {
+    //     network: network,
+    //     airtimeAmount: amountNum,
+    //     initiatedVia: 'sms',
+    //     serviceType: 'airtime_purchase'
+    //   }
+    // });
+
     const transaction = await TransactionModel.create({
       transactionId: reference,
-      senderPhone: user.phoneNumber,
-      recipientPhone: normalizedRecipient,
-      recipientName: `${network} Airtime`,
+      userId: user._id,
+      senderUserId: user._id,
       amount: amountNum,
       fees: fee,
-      description: `${network} ₦${amountNum} airtime`,
+      description: `${network} ₦${amountNum} airtime to ${finalRecipient}`,
       status: 'processing',
+      transferType: 'airtime',
       paymentMethod: 'airtime_purchase',
+      recipientBankDetails: {
+        accountNumber: normalizedRecipient,
+        accountName: `${network} Airtime`,
+        bankName: network,
+        bankCode: network
+      },
       metadata: {
+        initiatedVia: 'sms',
         network: network,
         airtimeAmount: amountNum,
-        initiatedVia: 'sms'
+        serviceType: 'airtime_purchase'
       }
     });
-
     try {
       // Deduct from wallet first
       await UserModel.updateOne(
@@ -134,7 +165,7 @@ const handleAirtimePurchase = async (user, message) => {
         return await sendSMS(user.phoneNumber, 
           ` Airtime purchase successful!
           
-            ₦${amountNum} ${network} airtime sent to ${recipient}
+            ₦${amountNum} ${network} airtime sent to ${finalRecipient}
             Fee: ₦${fee}
             Ref: ${reference}
             New balance: ₦${newBalance.toFixed(2)}
@@ -186,23 +217,27 @@ const purchaseAirtime = async (phoneNumber, amount, network) => {
       recipients: [{
         phoneNumber: phoneNumber,
         currencyCode: 'NGN',
+        // amount: `NGN ${amount}`
         amount: amount
       }]
     };
 
     const response = await airtime.send(airtimeData);
-    
-    if (response.responses && response.responses.length > 0) {
+    console.log("Africa's Talking response:", JSON.stringify(response, null, 2));
+
+    if (response.responses && response.responses?.length > 0) {
       const result = response.responses[0];
       
-      if (result.status === 'Success') {
+      if (result.status === 'Sent' || result.status === 'Success') {
         return {
           success: true,
           transactionId: result.requestId,
           response: result
         };
+      } else if (result.errorMessage && result.errorMessage !== 'None') {
+        throw new Error(result.errorMessage);
       } else {
-        throw new Error(result.errorMessage || 'Airtime purchase failed');
+        throw new Error('Airtime purchase failed');
       }
     }
 
@@ -318,10 +353,15 @@ const getAirtimeHistory = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     
     const user = await UserModel.findById(userId);
+
+    // const transactions = await TransactionModel.find({
+    //   senderPhone: user.phoneNumber,
+    //   paymentMethod: { $in: ['airtime_purchase', 'data_purchase'] }
+    // })
     
     const transactions = await TransactionModel.find({
-      senderPhone: user.phoneNumber,
-      paymentMethod: { $in: ['airtime_purchase', 'data_purchase'] }
+      senderUserId: userId,
+      transferType: { $in: ['airtime', 'data'] }
     })
     .sort({ createdAt: -1 })
     .limit(limit * 1)
