@@ -93,27 +93,6 @@ const handleAirtimePurchase = async (user, message) => {
     const reference = generateTransactionReference('AIRTIME');
     
     // Create transaction record
-    // const transaction = await TransactionModel.create({
-    //   transactionId: reference,
-    //   userId: user._id.toString(),
-    //   senderUserId: user._id.toString(),
-    //   senderPhone: user.phoneNumber,
-    //   recipientPhone: normalizedRecipient,
-    //   recipientName: `${network} Airtime`,
-    //   amount: amountNum,
-    //   fees: fee,
-    //   description: `${network} ₦${amountNum} airtime`,
-    //   status: 'processing',
-    //   transferType: 'airtime',
-    //   paymentMethod: 'wallet',
-    //   metadata: {
-    //     network: network,
-    //     airtimeAmount: amountNum,
-    //     initiatedVia: 'sms',
-    //     serviceType: 'airtime_purchase'
-    //   }
-    // });
-
     const transaction = await TransactionModel.create({
       transactionId: reference,
       userId: user._id,

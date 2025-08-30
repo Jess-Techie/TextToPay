@@ -9,7 +9,7 @@ const { getAirtimeHistory } = require('../controller/airtimeAndData.Contrl');
 const TransactionModel = require('../model/Transaction.Model');
 const UserModel = require('../model/User.Model');
 const { verifyWebhookSignature } = require('../controller/virtualAcctAndPaymentUtils.Contrl');
-const { sendSMS, generateRateLimitKey } = require('../controller/bankingAndSmsUtils.Contrl');
+const { sendSMS, generateRateLimitKey, normalizeNigerianPhone } = require('../controller/bankingAndSmsUtils.Contrl');
 
 const router = express.Router();
 
