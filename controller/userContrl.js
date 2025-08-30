@@ -89,12 +89,12 @@ const completeRegistration = async (phoneNumber, message) => {
       // }
       
       // Add this right after the BVN validation, before the Mono call
-      if (process.env.NODE_ENV === 'development' || bvn === '12345678902') {
+      if (process.env.NODE_ENV === 'development' || bvn === '12345678903') {
         // Mock BVN verification for testing
         bvnVerification = {
           isValid: true,
-          fullName: 'soludo Adi',
-          email: 'soludo@gmail.com',
+          fullName: 'Jessy Eli',
+          email: 'jessy@gmail.com',
           phoneNumber: phoneNumber,
           provider: 'test'
         };
