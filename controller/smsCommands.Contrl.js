@@ -414,7 +414,7 @@ const handlePinInput = async (session, pin) => {
         }
         
         return await sendSMS(session.phoneNumber, 
-            ` Incorrect PIN (${attempts}/3 attempts)
+            `Incorrect PIN (${attempts}/3 attempts)
             
             Try again:`);
         }
@@ -646,19 +646,19 @@ const handleBalanceInquiry = async (user) => {
       createdAt: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }
     });
     
-    const message = ` Wallet Balance
+    const message = ` Wallet Balance:\n
             
          ₦${user.walletBalance.toFixed(2)}
          ${user.phoneNumber}
-         ${user.fullName}
+         ${user.fullName}\n
 
         ${user.virtualAccount ? ` Fund Account: ${user.virtualAccount?.accountNumber}
          ${user.virtualAccount?.bankName}
 
-        ` : ''} ${recentCount} transactions (30 days)
+        ` : ''} \n${recentCount} transactions (30 days)
 
          Reply HELP for commands
-         Dial *347*456# for menu`;
+        `;
     
     return await sendSMS(user.phoneNumber, message);
 
@@ -703,7 +703,7 @@ const handleStatusInquiry = async (user, message) => {
       'pending': '🕒'
     };
     
-    const isSent = transaction.senderPhone === user.phoneNumber;
+    const isSent = transaction.senderUserId?.toString() === user._id.toString();
     const statusMessage = `${statusEmoji[transaction.status]} Transaction Status
     
         🔍 ${transaction.transactionId}
@@ -728,8 +728,8 @@ const sendRecentTransactions = async (user) => {
   try {
     const transactions = await TransactionModel.find({
       $or: [
-        { senderPhone: user.phoneNumber },
-        { recipientPhone: user.phoneNumber }
+        { senderUserId: user._id },
+        { recipientUserId: user._id }
       ]
     })
     .sort({ createdAt: -1 })
@@ -737,14 +737,14 @@ const sendRecentTransactions = async (user) => {
     
     if (transactions.length === 0) {
       return await sendSMS(user.phoneNumber, 
-        `📊 Transaction History
+        ` Transaction History
                     
             No transactions yet.
 
-            💡 Send your first payment:
+            Send your first payment:
             PAY 1000 TO 1234567890
 
-            Buy airtime: BUY 200 FOR 08123456789`);
+            Buy airtime: BUY 200 08123456789 MTN`);
     }
     
     let message = ` Recent Transactions (Last 5)
@@ -752,7 +752,7 @@ const sendRecentTransactions = async (user) => {
 `;
     
     transactions.forEach((txn, index) => {
-      const isSent = txn.senderUserId === user._id;
+      const isSent = txn.senderUserId?.toString() === user._id.toString();
       const emoji = isSent ? '📤' : '📥';
       const status = txn.status === 'completed' ? '✅' : 
                     txn.status === 'failed' ? '❌' : '⏳';
@@ -782,11 +782,11 @@ const sendAccountDetails = async (user) => {
         ${user.phoneNumber}
         ${user.fullName}
         Balance: ₦${user.walletBalance.toFixed(2)}
-        ${user.bvnVerified ? '✅' : '⚠️'} BVN Verified
-        Joined: ${user.createdAt.toLocaleDateString('en-NG')}
+        ${user.bvnVerified ? '✅' : '⚠️'} BVN Verified\n
+        Joined: ${user.createdAt.toLocaleDateString('en-NG')}\n
 
-        ${user.virtualAccount ? `🏦 Funding Account:
-        ${user.virtualAccount?.accountNumber || 'N/A'}
+        ${user.virtualAccount ? `🏦 Funding Account:\n
+        ${user.virtualAccount?.accountNumber || 'N/A'}\n
         ${user.virtualAccount?.bankName || 'your bank'}
 
         ` : ''} Need help? Text HELP
@@ -809,16 +809,20 @@ const sendHelpMenu = async (phoneNumber) => {
         💸 PAYMENTS:
         PAY 1000 TO 1234567890
         PAY 5000 TO 1234567890 GTB
+        PAY 5000 TO 1234567890 GTB lunch(with description) \n
 
         📞 AIRTIME:
         BUY 200 MTN (For self)
-        BUY 200 FOR 08123456789
+        BUY 200 08123456789 MTN\n
 
         🔍 ACCOUNT:
         BAL - Check balance
         STATUS TXN123456 - Track payment  
         HISTORY - Recent transactions
-        ACCOUNT - Your details
+        ACCOUNT - Your details\n
+
+        🛠️ ACCOUNT SETUP:
+        RESET - Reset your PIN\n
 
         📞 Support: HELP
         💡 More features coming soon!

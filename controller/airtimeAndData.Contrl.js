@@ -15,8 +15,8 @@ const airtime = AfricasTalking.AIRTIME;
 // Network detection from phone number
 const detectNetworkFromPhone = (phoneNumber) => {
   const cleaned = phoneNumber.replace(/\D/g, '');
-  const prefix = cleaned.substring(cleaned.length - 11, cleaned.length - 7); // Get 4-digit prefix
-  
+  const prefix = cleaned.substring(0, 4); // Get 4-digit prefix
+
   const networkPrefixes = {
     '0803': 'MTN', '0806': 'MTN', '0813': 'MTN', '0816': 'MTN', 
     '0810': 'MTN', '0814': 'MTN', '0903': 'MTN', '0906': 'MTN',
@@ -33,7 +33,8 @@ const handleAirtimePurchase = async (user, message) => {
   try {
     // Parse: BUY 200 FOR 08123456789 or BUY 500 MTN 08123456789
     // const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?\s+(?:FOR\s+)?(\d{10,11})$/i;
-    const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(?:FOR\s+)?(\d{10,11}))?$/i;
+    // const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(?:FOR\s+)?(\d{10,11}))?$/i;
+    const airtimeRegex = /^BUY\s+(\d+)(?:\s+(\d{10,11})\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?$/i;
     const match = message.match(airtimeRegex);
     
     if (!match) {
@@ -41,8 +42,8 @@ const handleAirtimePurchase = async (user, message) => {
         ` Invalid format. Use:
 
         BUY 200 (for yourself)
-        BUY 200 FOR 08123456789
-        BUY 500 MTN 08123456789
+        BUY 200 08123456789 MTN
+        BUY 500 MTN 
 
         Amount: ₦50 - ₦10,000`);
     }
