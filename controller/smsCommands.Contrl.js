@@ -1,10 +1,6 @@
 const smsSessionModel = require("../model/smsSession.Model");
 const UserModel = require("../model/User.Model");
 const TransactionModel = require("../model/Transaction.Model");
-// const { sendSMS, normalizeNigerianPhone } = require("../utils/smsUtils");
-// const { generateTransactionReference, resolveBankByCode, resolveAccountName } = require('../utils/korapayUtils');
-// const { initiateRegistration, completeRegistration, verifyPhone, resendOTP } = require('./userController');
-// const { handleAirtimePurchase, handleDataPurchase } = require('./airtimeController');
 const bcrypt = require('bcryptjs');
 const { updatePin, verifyPhone, resendOTP, initiateRegistration, completeRegistration } = require("./userContrl");
 const { processBankTransfer, generateTransactionReference, resolveBankByCode, resolveAccountName } = require("./virtualAcctAndPaymentUtils.Contrl");
@@ -48,7 +44,7 @@ const processSMSCommand = async (phoneNumber, message) => {
       return await resendOTP(normalizedPhone);
     }
 
-    // Reset PIN commands
+    // Reset / update PIN commands
     if (['RESET', 'RESETPIN'].includes(cleanMessage)) {
       return await updatePin(normalizedPhone);
     }
@@ -815,6 +811,7 @@ const sendHelpMenu = async (phoneNumber) => {
         PAY 5000 TO 1234567890 GTB
 
         📞 AIRTIME:
+        BUY 200 MTN (For self)
         BUY 200 FOR 08123456789
 
         🔍 ACCOUNT:

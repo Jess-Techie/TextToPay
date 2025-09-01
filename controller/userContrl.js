@@ -88,7 +88,7 @@ const completeRegistration = async (phoneNumber, message) => {
       //     return await sendSMS(phoneNumber, " BVN verification failed. Please check your BVN and try again.");
       // }
       
-      // Add this right after the BVN validation, before the Mono call
+      // mock data for temporary testing
       if (process.env.NODE_ENV === 'development' || bvn === '12345678903') {
         // Mock BVN verification for testing
         bvnVerification = {
@@ -173,7 +173,6 @@ const completeRegistration = async (phoneNumber, message) => {
           userId: user._id,
           fullName: user.fullName,
           phoneNumber: user.phoneNumber,
-          // Don't pass actual BVN to external services
         });
 
         if (virtualAccount.success) {
@@ -245,7 +244,7 @@ const verifyPhone = async (phoneNumber, message) => {
       });
 
       if (!otpRecord) {
-        return await sendSMS(phoneNumber, " Invalid or expired verification code. Text resend || code to get a new code.");
+        return await sendSMS(phoneNumber, " Invalid or expired verification code. Text resend to get a new otp.");
       }
 
       // Mark OTP as verified
@@ -264,16 +263,16 @@ const verifyPhone = async (phoneNumber, message) => {
 
       const welcomeMessage = ` Phone verified successfully!
 
-      💳 Your TextToPay wallet is ready
+      💳 Your TextToPay wallet is ready\n
       📱 ${normalizedPhone}
       💰 Balance: ₦0.00
-      ${user.virtualAccount ? `🏦 Account: ${user.virtualAccount.accountNumber}` : ''}
+      ${user.virtualAccount ? `🏦 Account: ${user.virtualAccount.accountNumber}` : ''}\n
 
       💡 Commands:
-      • BAL - Check balance  
-      • PAY 1000 TO 08123456789 - Send money
-      • BUY 200 FOR 08123456789 - Buy airtime
-      • HELP - All commands
+      • BAL - Check balance  \n
+      • PAY 1000 TO 08123456789 - Send money\n
+      • BUY 200 FOR 08123456789 - Buy airtime\n
+      • HELP - All commands\n
 
       Ready to send money? 🚀`;
 
@@ -318,7 +317,7 @@ const resendOTP = async (phoneNumber) => {
       });
 
       return await sendSMS(phoneNumber, ` New verification code: ${otp}
-      ⏰ Valid for 5 minutes
+      ⏰ Valid for 5 minutes\n
       Reply: VERIFY ${otp}`);
 
     } catch (error) {
