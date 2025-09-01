@@ -89,7 +89,7 @@ const completeRegistration = async (phoneNumber, message) => {
       // }
       
       // mock data for temporary testing
-      if (process.env.NODE_ENV === 'development' || bvn === '12345678903') {
+      if (process.env.NODE_ENV === 'development' || bvn === '12345678902') {
         // Mock BVN verification for testing
         bvnVerification = {
           isValid: true,
