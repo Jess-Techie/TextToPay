@@ -650,9 +650,9 @@ const handleBalanceInquiry = async (user) => {
             
          ₦${user.walletBalance.toFixed(2)}
          ${user.phoneNumber}
-         ${user.fullName}\n
+         ${user.fullName}
 
-        ${user.virtualAccount ? ` Fund Account: ${user.virtualAccount?.accountNumber}
+        ${user.virtualAccount ? `\n Fund Account: ${user.virtualAccount?.accountNumber}
          ${user.virtualAccount?.bankName}
 
         ` : ''} \n${recentCount} transactions (30 days)
@@ -804,27 +804,28 @@ const sendAccountDetails = async (user) => {
 // Send comprehensive help menu
 const sendHelpMenu = async (phoneNumber) => {
   try {
-    const helpMessage = `📱 TextToPay Commands
+    const helpMessage = `📱 TextToPay Commands\n
     
-        💸 PAYMENTS:
-        PAY 1000 TO 1234567890
-        PAY 5000 TO 1234567890 GTB
-        PAY 5000 TO 1234567890 GTB lunch(with description) \n
+        💸 PAYMENTS:\n
+        PAY 1000 TO 1234567890\n
+        PAY 5000 TO 1234567890 GTB\n
+        PAY 5000 TO 1234567890 GTB lunch(with description)\n
 
-        📞 AIRTIME:
-        BUY 200 MTN (For self)
+        📞 AIRTIME:\n
+        BUY 200 MTN (For yourself)\n
         BUY 200 08123456789 MTN\n
+        BUY 200 FOR 08123456789 MTN\n
 
-        🔍 ACCOUNT:
-        BAL - Check balance
-        STATUS TXN123456 - Track payment  
-        HISTORY - Recent transactions
+        🔍 ACCOUNT:\n
+        BAL - Check balance\n
+        STATUS TXN123456 - Track payment\n
+        HISTORY - Recent transactions\n
         ACCOUNT - Your details\n
 
-        🛠️ ACCOUNT SETUP:
+        🛠️ ACCOUNT SETUP:\n
         RESET - Reset your PIN\n
 
-        📞 Support: HELP
+        📞 Support: HELP\n
         💡 More features coming soon!
 
         Ready to send money? `;

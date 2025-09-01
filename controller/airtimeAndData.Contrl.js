@@ -34,21 +34,23 @@ const handleAirtimePurchase = async (user, message) => {
     // Parse: BUY 200 FOR 08123456789 or BUY 500 MTN 08123456789
     // const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?\s+(?:FOR\s+)?(\d{10,11})$/i;
     // const airtimeRegex = /^BUY\s+(\d+)(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(?:FOR\s+)?(\d{10,11}))?$/i;
-    const airtimeRegex = /^BUY\s+(\d+)(?:\s+(\d{10,11})\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?$/i;
+    // const airtimeRegex = /^BUY\s+(\d+)(?:\s+(\d{10,11})\s+(MTN|GLO|AIRTEL|9MOBILE))?(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?$/i;
+    const airtimeRegex = /^BUY\s+(\d+)(?:\s+(?:FOR\s+)?(\+?\d{10,14}))?(?:\s+(MTN|GLO|AIRTEL|9MOBILE))?$/i;
     const match = message.match(airtimeRegex);
     
     if (!match) {
       return await sendSMS(user.phoneNumber, 
         ` Invalid format. Use:
 
-        BUY 200 (for yourself)
-        BUY 200 08123456789 MTN
-        BUY 500 MTN 
-
+        BUY 200 (for yourself)\n
+        BUY 200 MTN (for yourself with network)\n
+        BUY 200 08133092341 MTN\n
+        BUY 200 FOR 08133092341 MTN\n
+        
         Amount: ₦50 - ₦10,000`);
     }
 
-    const [, amount, specifiedNetwork, recipient] = match;
+    const [, amount, recipient, specifiedNetwork] = match;
     const finalRecipient = recipient || user.phoneNumber;
     
     const amountNum = parseFloat(amount);
@@ -60,19 +62,32 @@ const handleAirtimePurchase = async (user, message) => {
     }
 
     // Validate phone number
-    if (!isValidNigerianPhone(finalRecipient)) {
+    if (recipient && !isValidNigerianPhone(finalRecipient)) {
       return await sendSMS(user.phoneNumber, 
         " Invalid phone number format. Use 11-digit Nigerian number.");
     }
 
-    const normalizedRecipient = normalizeNigerianPhone(finalRecipient);
+    // const normalizedRecipient = normalizeNigerianPhone(finalRecipient);
     
     // Detect network if not specified
-    const network = specifiedNetwork || detectNetworkFromPhone(normalizedRecipient);
+    // const network = specifiedNetwork || detectNetworkFromPhone(normalizedRecipient);
     
-    if (network === 'UNKNOWN') {
-      return await sendSMS(user.phoneNumber, 
-        " Could not detect network. Please specify: BUY 200 MTN 08123456789");
+    // if (network === 'UNKNOWN') {
+    //   return await sendSMS(user.phoneNumber, 
+    //     " Could not detect network. Please specify: BUY 200 MTN 08123456789");
+    // }
+
+    const normalizedRecipient = normalizeNigerianPhone(finalRecipient);
+
+    // If buying for self and network not specified, try to detect from user's number
+    let network = specifiedNetwork;
+    if (!network) {
+      if (finalRecipient === user.phoneNumber) {
+        // Try to detect from user's registered phone number
+        network = detectNetworkFromPhone(user.phoneNumber);
+      } else {
+        network = detectNetworkFromPhone(normalizedRecipient);
+      }
     }
 
     // Calculate fee (₦10 for airtime purchases)
