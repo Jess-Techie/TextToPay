@@ -93,8 +93,8 @@ const completeRegistration = async (phoneNumber, message) => {
         // Mock BVN verification for testing
         bvnVerification = {
           isValid: true,
-          fullName: 'Jessy elisius',
-          email: 'jessy@gmail.com',
+          fullName: 'Soludo Adi',
+          email: 'soludo@gmail.com',
           phoneNumber: phoneNumber,
           provider: 'test'
         };
