@@ -89,7 +89,7 @@ const completeRegistration = async (phoneNumber, message) => {
       // }
       
       // mock data for temporary testing
-      if (process.env.NODE_ENV === 'development' || bvn === '12345678903') {
+      if (process.env.NODE_ENV === 'development' || bvn === '12345678902') {
         // Mock BVN verification for testing
         bvnVerification = {
           isValid: true,
@@ -266,7 +266,7 @@ const verifyPhone = async (phoneNumber, message) => {
       💳 Your TextToPay wallet is ready\n
       📱 ${normalizedPhone}
       💰 Balance: ₦0.00
-      ${user.virtualAccount ? `🏦 Account: ${user.virtualAccount.accountNumber}` : ''}\n
+      ${user.virtualAccount ? `🏦 Account: ${user.virtualAccount?.accountNumber}` : ''}\n
 
       💡 Commands:
       • BAL - Check balance  \n
