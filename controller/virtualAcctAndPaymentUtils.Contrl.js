@@ -10,32 +10,8 @@ const korapayAPI = axios.create({
   headers: {
     'Authorization': `Bearer ${process.env.kora_key}`,
     'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'User-Agent': 'TextToPay/1.0 (Railway)',
-    'X-Requested-With': 'XMLHttpRequest'
   }
 });
-
-
-// Add retry interceptor
-korapayAPI.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const config = error.config;
-    
-    // Check if it's a Cloudflare block
-    if (error.response && error.response.status === 403 && !config._retry) {
-      config._retry = true;
-      
-      // Wait and retry
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      return korapayAPI(config);
-    }
-    
-    return Promise.reject(error);
-  }
-);
-
 
 // Create virtual account for user
 const createVirtualAccount = async (userData) => {
