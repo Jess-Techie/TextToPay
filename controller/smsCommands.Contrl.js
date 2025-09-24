@@ -410,7 +410,7 @@ const handlePaymentConfirmation = async (session, message) => {
       return await sendSMS(session.phoneNumber, 
         `To complete payment securely:
 
-        Dial *384*17998# (sandbox)
+        Dial *384*23125# (sandbox)
         Select: 1. TextToPay Transactions  
         Enter session ID: ${sessionCode}
         Enter your 4-digit PIN
