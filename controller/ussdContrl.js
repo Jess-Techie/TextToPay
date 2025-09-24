@@ -1,8 +1,8 @@
 const smsSessionModel = require("../model/smsSession.Model");
 const UserModel = require("../model/User.Model");
 const bcrypt = require('bcryptjs');
-const { processPaymentTransaction } = require('./smsContrl');
 const { ussd } = require("./bankingAndSmsUtils.Contrl");
+const { processPaymentTransaction } = require("./smsCommands.Contrl");
 
 const handleUSSDRequest = async (sessionId, serviceCode, phoneNumber, text) => {
     try {
