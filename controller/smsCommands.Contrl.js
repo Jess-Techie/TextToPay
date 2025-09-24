@@ -350,38 +350,78 @@ const handlePayCommand = async (user, message) => {
 };
 
 // Handle payment confirmation
-const handlePaymentConfirmation = async (session, message) => {
-  try {
-    if (['NO', 'CANCEL', 'STOP'].includes(message)) {
-      await smsSessionModel.deleteOne({ _id: session._id });
-      return await sendSMS(session.phoneNumber, 
-        " Payment cancelled. Your money is safe! 💰");
-    }
+// const handlePaymentConfirmation = async (session, message) => {
+//   try {
+//     if (['NO', 'CANCEL', 'STOP'].includes(message)) {
+//       await smsSessionModel.deleteOne({ _id: session._id });
+//       return await sendSMS(session.phoneNumber, 
+//         " Payment cancelled. Your money is safe! ");
+//     }
     
-    if (!['YES', 'CONFIRM', 'OK'].includes(message)) {
-      return await sendSMS(session.phoneNumber, 
-        ` Please confirm:
+//     if (!['YES', 'CONFIRM', 'OK'].includes(message)) {
+//       return await sendSMS(session.phoneNumber, 
+//         ` Please confirm:
                 
-        Reply YES to proceed
-        Reply NO to cancel`);
-    }
+//         Reply YES to proceed
+//         Reply NO to cancel`);
+//     }
     
-    // Update session to await PIN
-    await smsSessionModel.updateOne(
-      { _id: session._id },
-      { currentStep: 'awaiting_pin' }
-    );
+//     // Update session to await PIN
+//     await smsSessionModel.updateOne(
+//       { _id: session._id },
+//       { currentStep: 'awaiting_pin' }
+//     );
     
-    return await sendSMS(session.phoneNumber, 
-      ` Enter your 4-digit PIN to complete payment:
+//     return await sendSMS(session.phoneNumber, 
+//       ` Enter your 4-digit PIN to complete payment:
       
-        Keep your PIN secure!`);
+//         Keep your PIN secure!`);
 
-  } catch (error) {
-    console.error('Confirmation error:', error);
-    return await sendSMS(session.phoneNumber, 
-      " Confirmation failed. Please try again.");
-  }
+//   } catch (error) {
+//     console.error('Confirmation error:', error);
+//     return await sendSMS(session.phoneNumber, 
+//       " Confirmation failed. Please try again.");
+//   }
+// };
+const handlePaymentConfirmation = async (session, message) => {
+    try {
+      if (['NO', 'CANCEL', 'STOP'].includes(message)) {
+        await smsSessionModel.deleteOne({ _id: session._id });
+        return await sendSMS(session.phoneNumber, 
+          "Payment cancelled. Your money is safe!");
+      }
+      
+      if (!['YES', 'CONFIRM', 'OK'].includes(message)) {
+        return await sendSMS(session.phoneNumber, 
+          `Please confirm:
+          
+          Reply YES to proceed
+          Reply NO to cancel`);
+      }
+      
+      // Update session to await USSD PIN
+      await smsSessionModel.updateOne(
+        { _id: session._id },
+        { currentStep: 'awaiting_ussd_pin' }
+      );
+      
+      const sessionCode = session.sessionId.slice(-6); // Last 6 characters
+      
+      return await sendSMS(session.phoneNumber, 
+        `To complete payment securely:
+
+        Dial *384*17998# (sandbox)
+        Select: 1. TextToPay Transactions  
+        Enter session ID: ${sessionCode}
+        Enter your 4-digit PIN
+
+        Session expires in 5 minutes`);
+
+    } catch (error) {
+      console.error('Confirmation error:', error);
+      return await sendSMS(session.phoneNumber, 
+        "Confirmation failed. Please try again.");
+    }
 };
 
 // Handle PIN input and process payment

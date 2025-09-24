@@ -1,18 +1,19 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
+  const credentials = {
+      apiKey: process.env.africasTalkingApiKey,
+      username: process.env.africasTalkingApiUsername
+  };
+    
+  const AfricasTalking = require('africastalking')(credentials);
+  const sms = AfricasTalking.SMS;
+  const ussd = AfricasTalking.USSD;
+
 
 // Send SMS via Africa's Talking
 const sendSMS = async (phoneNumber, message) => {
   try {
-    const credentials = {
-      apiKey: process.env.africasTalkingApiKey,
-      username: process.env.africasTalkingApiUsername
-    };
-    
-    const AfricasTalking = require('africastalking')(credentials);
-    const sms = AfricasTalking.SMS;
-    
     const options = {
       to: phoneNumber,
       message: message,
@@ -20,7 +21,7 @@ const sendSMS = async (phoneNumber, message) => {
     };
     
     const result = await sms.send(options);
-    console.log('📱 SMS sent:', result);
+    console.log('SMS sent:', result);
     
     return {
       success: true,
@@ -151,6 +152,7 @@ const logSMSInteraction = async (phoneNumber, message, direction, status = 'sent
 
 module.exports = {
   sendSMS,
+  ussd,
   isValidNigerianPhone,
   normalizeNigerianPhone,
   generateOTP,

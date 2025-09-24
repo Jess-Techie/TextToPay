@@ -9,7 +9,8 @@ const { getAirtimeHistory } = require('../controller/airtimeAndData.Contrl');
 const TransactionModel = require('../model/Transaction.Model');
 const UserModel = require('../model/User.Model');
 const { verifyWebhookSignature } = require('../controller/virtualAcctAndPaymentUtils.Contrl');
-const { sendSMS, generateRateLimitKey, normalizeNigerianPhone } = require('../controller/bankingAndSmsUtils.Contrl');
+const { sendSMS, generateRateLimitKey, normalizeNigerianPhone, ussd } = require('../controller/bankingAndSmsUtils.Contrl');
+const { handleUSSDRequest } = require('../controller/ussdContrl');
 
 const router = express.Router();
 
@@ -100,6 +101,24 @@ router.post('/sms/webhook', smsRateLimit, async (req, res) => {
     });
   }
 });
+
+
+//===================== USSD WEBHOOK ROUTE ====================
+router.post('/ussd/webhook', async (req, res) => {
+    try {
+        const { sessionId, serviceCode, phoneNumber, text } = req.body;
+        const result = await handleUSSDRequest(sessionId, serviceCode, phoneNumber, text);
+        
+        // Send the result as JSON (what Africa's Talking expects)
+        res.json(result);
+        
+    } catch (error) {
+        console.error('USSD webhook error:', error);
+        res.json(ussd.send('System error occurred.', false));
+    }
+    
+});
+
 
 // ==================== AUTHENTICATION ROUTES ====================
 

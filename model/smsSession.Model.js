@@ -1,3 +1,4 @@
+const { required } = require('joi');
 const mongoose = require('mongoose');
 
 // SMS Session Schema - Track ongoing conversations
@@ -18,7 +19,8 @@ const smsSessionSchema = new mongoose.Schema({
     },
     currentStep: {
         type: String,
-        enum: ['awaiting_command', 'awaiting_amount', 'awaiting_recipient', 'awaiting_pin', 'awaiting_confirmation'],
+        enum: ['awaiting_command', 'awaiting_amount', 'awaiting_recipient', 'awaiting_pin', 'awaiting_confirmation', 'awaiting_ussd_pin'],
+        required: true,
         default: 'awaiting_command'
     },
     transactionData: {
