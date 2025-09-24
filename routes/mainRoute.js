@@ -107,14 +107,18 @@ router.post('/sms/webhook', smsRateLimit, async (req, res) => {
 router.post('/ussd/webhook', async (req, res) => {
     try {
         const { sessionId, serviceCode, phoneNumber, text } = req.body;
+        console.log('USSD Request:', { sessionId, serviceCode, phoneNumber, text });
+
         const result = await handleUSSDRequest(sessionId, serviceCode, phoneNumber, text);
         
-        // Send the result as JSON (what Africa's Talking expects)
-        res.json(result);
+        // Send the response in Africa's Talking USSD format
+        res.set('Content-Type', 'text/plain');
+        res.send(result);
         
     } catch (error) {
         console.error('USSD webhook error:', error);
-        res.json(ussd.send('System error occurred.', false));
+        res.set('Content-Type', 'text/plain');
+        res.send('END System error occurred. Please try again.');
     }
     
 });

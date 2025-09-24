@@ -1,21 +1,27 @@
 const smsSessionModel = require("../model/smsSession.Model");
 const UserModel = require("../model/User.Model");
 const bcrypt = require('bcryptjs');
-const { ussd } = require("./bankingAndSmsUtils.Contrl");
+// const { ussd } = require("./bankingAndSmsUtils.Contrl");
 const { processPaymentTransaction } = require("./smsCommands.Contrl");
+
 
 const handleUSSDRequest = async (sessionId, serviceCode, phoneNumber, text) => {
     try {
         const input = text.split('*');
         const level = input.length;
         
+        console.log('USSD Level:', level, 'Input:', input);
+        
         if (level === 1 && input[0] === '') {
             // First interaction - show TextToPay option
-            return ussd.send(`Welcome to USSD\n1. TextToPay Transactions\n2. Other Services`, true);
+            return `CON Welcome to TextToPay USSD Service
+                1. TextToPay Transactions
+                2. Other Services`;
         }
         
         if (level === 2 && input[1] === '1') {
-            return ussd.send(`TextToPay:\nEnter your session ID:`, true);
+            return `CON TextToPay:
+            Enter your session ID:`;
         }
         
         if (level === 3 && input[1] === '1') {
@@ -30,10 +36,11 @@ const handleUSSDRequest = async (sessionId, serviceCode, phoneNumber, text) => {
             });
             
             if (!session) {
-                return ussd.send(`Session not found or expired.\nPlease start a new transaction via SMS.`, false);
+                return `END Session not found or expired.
+                Please start a new transaction via SMS.`;
             }
             
-            return ussd.send(`Enter your 4-digit PIN to complete payment of ₦${session.transactionData.totalAmount}:`, true);
+            return `CON Enter your 4-digit PIN to complete payment of ₦${session.transactionData?.totalAmount}:`;
         }
         
         if (level === 4 && input[1] === '1') {
@@ -43,18 +50,18 @@ const handleUSSDRequest = async (sessionId, serviceCode, phoneNumber, text) => {
             return await processUSSDPin(phoneNumber, sessionCode, pin);
         }
         
-        return ussd.send('Invalid selection.', false);
+        return 'END Invalid selection.';
         
     } catch (error) {
         console.error('USSD error:', error);
-        return ussd.send('System error. Please try again.', false);
+        return 'END System error. Please try again.';
     }
 };
 
 const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
     try {
         if (!/^\d{4}$/.test(pin)) {
-            return ussd.send('Invalid PIN format. Must be 4 digits.', false);
+            return 'END Invalid PIN format. Must be 4 digits.';
         }
         
         const session = await smsSessionModel.findOne({
@@ -65,7 +72,7 @@ const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
         });
         
         if (!session) {
-            return ussd.send('Session expired.', false);
+            return 'END Session expired.';
         }
         
         const user = await UserModel.findById(session.userId);
@@ -82,10 +89,11 @@ const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
             
             if (attempts >= 3) {
                 await smsSessionModel.deleteOne({ _id: session._id });
-                return ussd.send('Too many failed attempts. Transaction cancelled.', false);
+                return 'END Too many failed attempts. Transaction cancelled.';
             }
             
-            return ussd.send(`Incorrect PIN (${attempts}/3 attempts).\nTry again by dialing the USSD code.`, false);
+            return `END Incorrect PIN (${attempts}/3 attempts).
+            Try again by dialing the USSD code.`;
         }
         
         // Process transaction asynchronously
@@ -93,47 +101,22 @@ const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
             processPaymentTransaction(user, session);
         });
         
-        return ussd.send(`PIN accepted.\nProcessing your payment of ₦${session.transactionData.totalAmount}.\nYou'll receive SMS confirmation shortly.`, false);
+        return `END PIN accepted.
+        Processing your payment of ₦${session.transactionData.totalAmount}.
+        You'll receive SMS confirmation shortly.`;
         
     } catch (error) {
         console.error('USSD PIN processing error:', error);
-        return ussd.send('Processing failed. Please try again.', false);
-    }
-};
-
-// If you need to maintain compatibility with Express.js routes, you can wrap it:
-const handleUSSDRequestWithExpress = async (req, res) => {
-    const { sessionId, serviceCode, phoneNumber, text } = req.body;
-    
-    try {
-        const result = await handleUSSDRequest(sessionId, serviceCode, phoneNumber, text);
-        
-        // If ussd.send returns an object with the response format Africa's Talking expects
-        if (result && typeof result === 'object') {
-            return res.json(result);
-        }
-        
-        // Fallback to direct response
-        return res.send(result);
-        
-    } catch (error) {
-        console.error('USSD wrapper error:', error);
-        return res.send('END System error.');
+        return 'END Processing failed. Please try again.';
     }
 };
 
 module.exports = { 
     handleUSSDRequest, 
-    processUSSDPin,
-    handleUSSDRequestWithExpress 
+    processUSSDPin
 };
 
 
-// const smsSessionModel = require("../model/smsSession.Model");
-
-// const UserModel = require("../model/User.Model");
-// const bcrypt = require('bcryptjs');
-// const { processPaymentTransaction } = require('./smsContrl');
 
 // const handleUSSDRequest = async (req, res) => {
 //     const { sessionId, serviceCode, phoneNumber, text } = req.body;
