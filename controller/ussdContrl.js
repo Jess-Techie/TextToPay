@@ -75,6 +75,60 @@ const { processPaymentTransaction } = require("./smsCommands.Contrl");
 // };
 
 
+
+// const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
+//     try {
+//         if (!/^\d{4}$/.test(pin)) {
+//             return 'END Invalid PIN format. Must be 4 digits.';
+//         }
+        
+//         const session = await smsSessionModel.findOne({
+//             sessionId: { $regex: sessionCode, $options: 'i' },
+//             phoneNumber,
+//             currentStep: 'awaiting_ussd_pin',
+//             expiresAt: { $gt: new Date() }
+//         });
+        
+//         if (!session) {
+//             return 'END Session expired.';
+//         }
+        
+//         const user = await UserModel.findById(session.userId);
+//         const isValidPin = await bcrypt.compare(pin, user.pin);
+        
+//         if (!isValidPin) {
+//             // Increment attempts
+//             await smsSessionModel.updateOne(
+//                 { _id: session._id },
+//                 { $inc: { 'transactionData.pinAttempts': 1 } }
+//             );
+            
+//             const attempts = (session.transactionData.pinAttempts || 0) + 1;
+            
+//             if (attempts >= 3) {
+//                 await smsSessionModel.deleteOne({ _id: session._id });
+//                 return 'END Too many failed attempts. Transaction cancelled.';
+//             }
+            
+//             return `END Incorrect PIN (${attempts}/3 attempts).
+// Try again by dialing the USSD code.`;
+//         }
+        
+//         // Process transaction asynchronously
+//         setImmediate(() => {
+//             processPaymentTransaction(user, session);
+//         });
+        
+//         return `END PIN accepted.
+// Processing your payment of ₦${session.transactionData.totalAmount}.
+// You'll receive SMS confirmation shortly.`;
+        
+//     } catch (error) {
+//         console.error('USSD PIN processing error:', error);
+//         return 'END Processing failed. Please try again.';
+//     }
+// };
+
 const handleUSSDRequest = async (sessionId, serviceCode, phoneNumber, text) => {
     try {
         const input = text ? text.split('*') : [''];
@@ -123,10 +177,20 @@ Please start a new transaction via SMS.`;
             return `CON Enter your 4-digit PIN to complete payment of ₦${session.transactionData?.totalAmount}:`;
         }
         
-        // User entered PIN after session code
+        // User entered PIN after session code (handles both first attempt and retries)
         if (text.startsWith('1*') && level === 3) {
             const sessionCode = input[1];
             const pin = input[2];
+            
+            return await processUSSDPin(phoneNumber, sessionCode, pin);
+        }
+        
+        // Handle PIN retry when user enters new PIN after wrong attempt
+        // This handles cases where USSD continues after wrong PIN with CON
+        if (text.startsWith('1*') && level >= 3) {
+            const parts = text.split('*');
+            const sessionCode = parts[1];
+            const pin = parts[parts.length - 1]; // Get the last part as PIN
             
             return await processUSSDPin(phoneNumber, sessionCode, pin);
         }
@@ -142,6 +206,23 @@ Please start a new transaction via SMS.`;
             return 'END Service coming soon.';
         }
         
+        // Handle direct PIN entry after wrong PIN (when user just enters 4 digits)
+        if (/^\d{4}$/.test(text)) {
+            // Look for any active session for this phone number
+            const session = await smsSessionModel.findOne({
+                phoneNumber,
+                currentStep: 'awaiting_ussd_pin',
+                expiresAt: { $gt: new Date() },
+                'transactionData.pinAttempts': { $gt: 0 }
+            });
+            
+            if (session) {
+                // Extract session code from the sessionId for processing
+                const sessionCode = session.sessionId.slice(-4);
+                return await processUSSDPin(phoneNumber, sessionCode, text);
+            }
+        }
+        
         return 'END Invalid selection.';
         
     } catch (error) {
@@ -153,7 +234,7 @@ Please start a new transaction via SMS.`;
 const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
     try {
         if (!/^\d{4}$/.test(pin)) {
-            return 'END Invalid PIN format. Must be 4 digits.';
+            return 'CON Invalid PIN format. Must be 4 digits. Enter your 4-digit PIN:';
         }
         
         const session = await smsSessionModel.findOne({
@@ -181,11 +262,12 @@ const processUSSDPin = async (phoneNumber, sessionCode, pin) => {
             
             if (attempts >= 3) {
                 await smsSessionModel.deleteOne({ _id: session._id });
-                return 'END Too many failed attempts. Transaction cancelled.';
+                return 'END Too many failed attempts. Transaction cancelled for security.';
             }
             
-            return `END Incorrect PIN (${attempts}/3 attempts).
-Try again by dialing the USSD code.`;
+            // Keep session active and prompt for retry
+            return `CON Incorrect PIN (${attempts}/3 attempts).
+Enter your 4-digit PIN again:`;
         }
         
         // Process transaction asynchronously
