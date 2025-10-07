@@ -405,7 +405,7 @@ const handlePaymentConfirmation = async (session, message) => {
         { currentStep: 'awaiting_ussd_pin' }
       );
 
-      const sessionCode = session.sessionId.slice(-4); // Last 4 characters
+      const sessionCode = session.sessionId?.slice(-4); // Last 4 characters
 
       return await sendSMS(session.phoneNumber, 
         `To complete payment securely:

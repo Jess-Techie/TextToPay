@@ -17,6 +17,7 @@ const sendSMS = async (phoneNumber, message) => {
     const options = {
       to: phoneNumber,
       message: message,
+      senderId:"90212"
       // from: 'AFRICASTKNG'//process.env.africasTalkingSmsSenderId ||  // based on their documentation cox we are using sandbox
     };
     
